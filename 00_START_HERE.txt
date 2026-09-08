@@ -1,0 +1,111 @@
+================================================================================
+  WEBCRAFT - TARAYICI MINECRAFT 1.21.4 ISTEMCISI
+================================================================================
+
+Hoşgeldiniz! WebCraft, gerçek Minecraft Java Edition sunuculara bağlanan bir 
+web istemcisidir.
+
+================================================================================
+  HIZLI BASLANG (3 ADIM)
+================================================================================
+
+1. npm install
+2. npm run dev
+3. Tarayıcı aç: http://localhost:5173
+
+Menü → Çok Oyunculu → Doğrudan Bağlan → sunucu.com:25565
+
+================================================================================
+  DOSYA YAPISI
+================================================================================
+
+00_START_HERE.txt          ← Şu an burdasınız
+QUICKSTART.md              ← 5 dakikalık setup adımları
+README_TR.md               ← Tam tüm detaylar & sorun giderme
+NELER_YAPILDI.md           ← Ne değiştirildi, teknik detaylar
+.env.example               ← Environment variables
+
+server.ts                  ← Node.js + Minecraft protokol
+src/                       ← React/TypeScript kaynak kodu
+public/                    ← Static assets (textures vb)
+WebCraft-dist/             ← Ready build (production)
+
+================================================================================
+  NE ÇALIŞIR?
+================================================================================
+
+✓ Offline-mode Minecraft sunuculara bağlanma
+✓ Sunucunun teraini (heightmap) render etme
+✓ Chat mesajları gönder/al
+✓ Oyuncu listesi görme
+✓ Spawn pozisyonu senkronizasyonu
+
+✗ Online-mode/Hypixel (Mojang auth yok)
+✗ Entities/NPCs render'lama (V2'de)
+✗ Block interaction (read-only mode)
+
+================================================================================
+  KONTROLLER
+================================================================================
+
+W/A/S/D         - Hareket
+SPACE           - Sıçra
+T               - Chat aç
+E               - Inventory
+ESC             - Pause
+Mouse sağ tık   - Kamera (desktop)
+
+================================================================================
+  SUNUCU KURULUMU (Kendi Sunucun)
+================================================================================
+
+# Paper indir: https://papermc.io/downloads/paper
+
+echo "eula=true" > eula.txt
+echo "online-mode=false" >> server.properties
+
+java -Xmx2G -jar paper-1.21.4.jar nogui
+
+Sonra WebCraft'ta:
+  Doğrudan Bağlan → localhost:25565
+
+================================================================================
+  KOMUTLAR
+================================================================================
+
+npm install      - Bağımlılıkları yükle
+npm run dev      - Geliştirme sunucusu (http://localhost:5173)
+npm run lint     - TypeScript kontrol
+npm run build    - Üretim build
+npm start        - Üretim sunucusu (PORT 3000)
+
+PORT=8080 npm start   - Custom port
+
+================================================================================
+  SORUN MU?
+================================================================================
+
+1. README_TR.md dosyasını aç
+2. "Sorun Giderme" bölümüne bak
+3. Tarayıcı Console'u aç: F12
+4. Server logs'unu kontrol et
+
+Sık sorulan:
+- "Online-mode hatası" → sunucunun server.properties:
+  online-mode=false yap
+- "Bağlantı hatası" → firewall port 25565 açık mı?
+- "Hiç blok görünmüyor" → SPACE+W ile hareket et yukarı
+
+================================================================================
+  SONRAKI ADIM
+================================================================================
+
+1. QUICKSTART.md → 5 dakika
+2. Sunucuya bağlan
+3. Oyun oyna!
+
+Sorun olursa README_TR.md oku.
+
+Eğlenceleri olsun! :)
+
+================================================================================
