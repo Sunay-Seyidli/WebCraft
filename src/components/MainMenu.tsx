@@ -34,10 +34,10 @@ export function MainMenu({ onNavigate }: MainMenuProps) {
   };
 
   return (
-    <div className="relative w-full h-screen overflow-hidden flex flex-col items-center justify-between select-none font-['VT323'] text-2xl">
+    <div className="relative w-full min-h-screen h-full overflow-y-auto flex flex-col items-center justify-between select-none font-['VT323'] text-2xl py-4 sm:py-6">
       {/* Panorama Background with blur/zoom effect */}
       <div 
-        className="absolute inset-0 bg-cover bg-center filter brightness-90 transform scale-105 transition-transform duration-1000"
+        className="absolute inset-0 bg-cover bg-center filter brightness-90 transform scale-105 transition-transform duration-1000 pointer-events-none"
         style={{
           backgroundImage: `url('https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?q=80&w=1920&auto=format&fit=crop')`,
           transform: `scale(1.1) rotate(${Math.sin(rotation * 0.01) * 1}deg)`
@@ -45,19 +45,19 @@ export function MainMenu({ onNavigate }: MainMenuProps) {
       />
       
       {/* Dark overlay for vintage Java menu look */}
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] pointer-events-none" />
 
       {/* Top Header / Title */}
-      <div className="relative z-10 pt-12 flex flex-col items-center">
-        <div className="text-5xl md:text-8xl font-black text-yellow-300 tracking-wider font-['Press_Start_2P'] drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-center animate-pulse">
+      <div className="relative z-10 pt-4 sm:pt-8 flex flex-col items-center">
+        <div className="text-4xl sm:text-5xl md:text-8xl font-black text-yellow-300 tracking-wider font-['Press_Start_2P'] drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] text-center animate-pulse">
           MINECRAFT
         </div>
-        <div className="text-xl md:text-2xl text-white font-bold tracking-widest mt-2 drop-shadow-md">
+        <div className="text-lg sm:text-xl md:text-2xl text-white font-bold tracking-widest mt-1 sm:mt-2 drop-shadow-md">
           JAVA EDITION <span className="text-yellow-400">1.21.4</span> VANILLA
         </div>
 
         {/* Splash text floating */}
-        <div className="absolute -right-16 top-24 transform rotate-[-15deg] text-yellow-300 text-2xl font-bold drop-shadow-[0_2px_2px_rgba(0,0,0,0.9)] animate-bounce pointer-events-none">
+        <div className="hidden sm:block absolute -right-16 top-24 transform rotate-[-15deg] text-yellow-300 text-2xl font-bold drop-shadow-[0_2px_2px_rgba(0,0,0,0.9)] animate-bounce pointer-events-none">
           {splash}
         </div>
       </div>

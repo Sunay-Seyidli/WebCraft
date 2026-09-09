@@ -18,7 +18,7 @@ export function OptionsScreen({ onNavigate, settings, onUpdateSettings }: Option
   };
 
   return (
-    <div className="relative w-full h-screen overflow-hidden flex flex-col items-center justify-between p-6 select-none font-['VT323'] text-2xl">
+    <div className="relative w-full min-h-screen h-full overflow-y-auto flex flex-col items-center justify-between p-3 sm:p-6 select-none font-['VT323'] text-xl sm:text-2xl">
       {/* Background */}
       <div 
         className="absolute inset-0 bg-cover bg-center filter brightness-50"
@@ -27,12 +27,21 @@ export function OptionsScreen({ onNavigate, settings, onUpdateSettings }: Option
       <div className="absolute inset-0 bg-black/50" />
 
       {/* Header */}
-      <div className="relative z-10 text-4xl text-white font-bold tracking-wider pt-6 drop-shadow-md">
-        Seçenekler (Options) - 1.21.4
+      <div className="relative z-10 w-full max-w-2xl flex items-center justify-between pt-2 sm:pt-4">
+        <div className="text-2xl sm:text-4xl text-white font-bold tracking-wider drop-shadow-md">
+          Seçenekler (Options) - 1.21.4
+        </div>
+        <button
+          onClick={handleSave}
+          className="w-9 h-9 bg-red-600 active:bg-red-700 text-white font-bold text-lg rounded flex items-center justify-center shadow"
+          title="Kaydet ve Kapat"
+        >
+          ✕
+        </button>
       </div>
 
       {/* Options Form */}
-      <div className="relative z-10 w-full max-w-2xl h-[56vh] bg-black/60 border-4 border-[#373737] overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 gap-6 shadow-inner text-white">
+      <div className="relative z-10 w-full max-w-2xl h-[45vh] sm:h-[55vh] bg-black/60 border-4 border-[#373737] overflow-y-auto p-4 sm:p-6 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 shadow-inner text-white">
         {/* FOV */}
         <div className="flex flex-col gap-2">
           <label className="text-yellow-300">Görüş Açısı (FOV): {local.fov}</label>

@@ -867,19 +867,28 @@ async function startServer() {
             bot.entity.position.set(msg.x, msg.y, msg.z);
             bot.entity.yaw = msg.yaw;
             bot.entity.pitch = msg.pitch;
+            bot.entity.onGround = !!msg.onGround;
 
             // Send player movement packet to Minecraft server so server loads chunks and syncs entities!
-            if (bot._client) {
+            if (bot._client && bot._client.state === "play") {
               const degYaw = ((msg.yaw * 180) / Math.PI) % 360;
               const degPitch = ((msg.pitch * 180) / Math.PI) % 360;
+              const onGround = !!msg.onGround;
+
               try {
+                // Compatible with both 1.21.3+ (requires MovementFlags bitflags) and older versions (requires onGround boolean)
                 bot._client.write("position_look", {
                   x: msg.x,
                   y: msg.y,
                   z: msg.z,
                   yaw: degYaw,
                   pitch: degPitch,
-                  onGround: !!msg.onGround,
+                  flags: {
+                    onGround: onGround,
+                    hasHorizontalCollision: false,
+                    _value: onGround ? 1 : 0,
+                  },
+                  onGround: onGround,
                 });
               } catch {
                 try {
@@ -887,7 +896,12 @@ async function startServer() {
                     x: msg.x,
                     y: msg.y,
                     z: msg.z,
-                    onGround: !!msg.onGround,
+                    flags: {
+                      onGround: onGround,
+                      hasHorizontalCollision: false,
+                      _value: onGround ? 1 : 0,
+                    },
+                    onGround: onGround,
                   });
                 } catch {}
               }
@@ -921,16 +935,23 @@ async function startServer() {
               try {
                 if (text.startsWith("/")) {
                   if (bot._client && typeof bot._client.write === "function") {
-                    bot._client.write("chat_command", {
-                      command: text.slice(1),
-                      timestamp: BigInt(Date.now()),
-                      salt: 0n,
-                      argumentSignatures: [],
-                      signedPreview: false,
-                      messageCount: 0,
-                      acknowledged: Buffer.alloc(3),
-                      previousMessages: [],
-                    });
+                    // Try unsigned command first (standard for 1.20.5+)
+                    try {
+                      bot._client.write("chat_command", {
+                        command: text.slice(1),
+                      });
+                    } catch {
+                      bot._client.write("chat_command", {
+                        command: text.slice(1),
+                        timestamp: BigInt(Date.now()),
+                        salt: 0n,
+                        argumentSignatures: [],
+                        signedPreview: false,
+                        messageCount: 0,
+                        acknowledged: Buffer.alloc(3),
+                        previousMessages: [],
+                      });
+                    }
                   }
                 } else if (bot._client && typeof bot._client.write === "function") {
                   bot._client.write("chat_message", {

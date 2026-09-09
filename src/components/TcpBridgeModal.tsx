@@ -28,7 +28,7 @@ export function TcpBridgeModal({ onNavigate }: TcpBridgeModalProps) {
   };
 
   return (
-    <div className="relative w-full h-screen overflow-hidden flex flex-col items-center justify-between p-6 select-none font-['VT323'] text-2xl">
+    <div className="relative w-full min-h-screen h-full overflow-y-auto flex flex-col items-center justify-between p-3 sm:p-6 select-none font-['VT323'] text-xl sm:text-2xl">
       {/* Background */}
       <div 
         className="absolute inset-0 bg-cover bg-center filter brightness-50"
@@ -37,12 +37,24 @@ export function TcpBridgeModal({ onNavigate }: TcpBridgeModalProps) {
       <div className="absolute inset-0 bg-black/50" />
 
       {/* Header */}
-      <div className="relative z-10 text-4xl text-white font-bold tracking-wider pt-6 drop-shadow-md">
-        TCP-to-WebSocket Çevirici (Bridge Mimarisi)
+      <div className="relative z-10 w-full max-w-3xl flex items-center justify-between pt-2 sm:pt-4">
+        <div className="text-2xl sm:text-4xl text-white font-bold tracking-wider drop-shadow-md">
+          TCP-to-WebSocket Çevirici (Bridge)
+        </div>
+        <button
+          onClick={() => {
+            soundManager.playClick();
+            onNavigate('menu');
+          }}
+          className="w-9 h-9 bg-red-600 active:bg-red-700 text-white font-bold text-lg rounded flex items-center justify-center shadow"
+          title="Kapat"
+        >
+          ✕
+        </button>
       </div>
 
       {/* Content Box */}
-      <div className="relative z-10 w-full max-w-3xl h-[60vh] bg-black/70 border-4 border-[#373737] p-6 overflow-y-auto flex flex-col gap-4 text-white shadow-inner">
+      <div className="relative z-10 w-full max-w-3xl min-h-[45vh] max-h-[60vh] bg-black/70 border-4 border-[#373737] p-4 sm:p-6 overflow-y-auto flex flex-col gap-3 sm:gap-4 text-white shadow-inner my-2">
         <div className="text-yellow-300 text-3xl font-bold">Gerçek Minecraft Sunucularına Bağlantı Nasıl Çalışır?</div>
         <div className="text-xl text-gray-300 leading-relaxed">
           Tarayıcılar doğrudan ham TCP soketleri açamaz (güvenlik kısıtlamaları nedeniyle). Bu nedenle projede bir <span className="text-yellow-400 font-bold">Node.js WebSocket-to-TCP Bridge (Çevirici)</span> mimarisi kodlanmıştır.

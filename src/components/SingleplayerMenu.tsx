@@ -24,7 +24,7 @@ export function SingleplayerMenu({ onNavigate, onSelectWorld }: SingleplayerMenu
   };
 
   return (
-    <div className="relative w-full h-screen overflow-hidden flex flex-col items-center justify-between p-6 select-none font-['VT323'] text-2xl">
+    <div className="relative w-full min-h-screen h-full overflow-y-auto flex flex-col items-center justify-between p-3 sm:p-6 select-none font-['VT323'] text-xl sm:text-2xl">
       {/* Background */}
       <div 
         className="absolute inset-0 bg-cover bg-center filter brightness-50"
@@ -38,7 +38,7 @@ export function SingleplayerMenu({ onNavigate, onSelectWorld }: SingleplayerMenu
       </div>
 
       {/* World List Box */}
-      <div className="relative z-10 w-full max-w-2xl h-[55vh] bg-black/60 border-4 border-[#373737] overflow-y-auto p-4 flex flex-col gap-3 shadow-inner">
+      <div className="relative z-10 w-full max-w-2xl h-[42vh] sm:h-[50vh] bg-black/60 border-4 border-[#373737] overflow-y-auto p-3 sm:p-4 flex flex-col gap-2.5 sm:gap-3 shadow-inner">
         {worlds.map((w) => {
           const isSelected = w.id === selectedId;
           return (

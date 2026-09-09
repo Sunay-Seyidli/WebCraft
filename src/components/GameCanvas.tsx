@@ -111,6 +111,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   const [fps, setFps] = useState(60);
   const [playerPos, setPlayerPos] = useState({ x: '0.0', y: '64.0', z: '0.0' });
   const [targetedBlock, setTargetedBlock] = useState<TargetedBlockData | null>(null);
+  const [disconnectedReason, setDisconnectedReason] = useState<string | null>(null);
 
   const lastActionTimeRef = useRef<number>(0);
 
@@ -825,14 +826,17 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                 setEntitiesCount(entitiesMapRef.current.size);
               }
             } else if (data.type === 'kicked') {
-              setServerStatusText(`Sunucudan atıldınız: ${data.reason}`);
-              addChatMessage('Sunucu', `Sunucudan atıldınız: ${data.reason}`, true);
+              const reasonText = data.reason || 'Sunucu tarafından oturum sonlandırıldı.';
+              setServerStatusText(`Sunucudan atıldınız: ${reasonText}`);
+              addChatMessage('Sunucu', `Sunucudan atıldınız: ${reasonText}`, true);
+              setDisconnectedReason(`Sunucudan Atıldınız:\n${reasonText}`);
             } else if (data.type === 'error') {
               setServerStatusText(`Hata: ${data.message}`);
               addChatMessage('Sistem', `Hata: ${data.message}`, true);
             } else if (data.type === 'closed') {
               setServerStatusText(`Sunucu bağlantısı kapandı.`);
               addChatMessage('Sistem', 'Sunucu bağlantısı kapandı.', true);
+              setDisconnectedReason('Minecraft sunucusu ile bağlantı kesildi veya sunucu kapalı.');
             }
           } catch {
             // raw message
@@ -1176,7 +1180,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         {server && (
           <button
             onClick={handleRequestChunks}
-            className="px-2.5 py-1 bg-black/75 hover:bg-black/95 active:bg-emerald-950 border border-emerald-500 rounded text-emerald-300 text-sm sm:text-base flex items-center gap-1 shadow-md active:scale-95"
+            className="h-9 sm:h-10 px-2.5 sm:px-3 bg-black/75 hover:bg-black/95 active:bg-emerald-950 border border-emerald-500 rounded text-emerald-300 text-xs sm:text-base flex items-center gap-1 shadow-md active:scale-95"
             title="Chunkları Yenile"
           >
             🗺️ <span className="hidden sm:inline">Chunklar</span>
@@ -1184,7 +1188,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         )}
         <button
           onClick={() => setChatOpen((prev) => !prev)}
-          className={`px-2.5 py-1 border rounded text-white text-sm sm:text-base flex items-center gap-1 shadow-md active:scale-95 ${
+          className={`h-9 sm:h-10 px-2.5 sm:px-3 border rounded text-white text-xs sm:text-base flex items-center gap-1 shadow-md active:scale-95 ${
             chatOpen ? 'bg-yellow-600 border-yellow-400' : 'bg-black/75 hover:bg-black/95 border-gray-500'
           }`}
           title="Sohbet"
@@ -1193,14 +1197,14 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         </button>
         <button
           onClick={() => setInventoryOpen((prev) => !prev)}
-          className="px-2.5 py-1 bg-black/75 hover:bg-black/95 border border-gray-500 rounded text-white text-sm sm:text-base flex items-center gap-1 shadow-md active:scale-95"
+          className="h-9 sm:h-10 px-2.5 sm:px-3 bg-black/75 hover:bg-black/95 border border-gray-500 rounded text-white text-xs sm:text-base flex items-center gap-1 shadow-md active:scale-95"
           title="Envanter"
         >
           🎒 <span className="hidden sm:inline">Envanter</span>
         </button>
         <button
           onClick={() => setPaused((prev) => !prev)}
-          className="px-2.5 py-1 bg-black/75 hover:bg-black/95 border border-gray-500 rounded text-white text-sm sm:text-base flex items-center gap-1 shadow-md active:scale-95"
+          className="h-9 sm:h-10 px-3 bg-black/75 hover:bg-black/95 border border-gray-500 rounded text-white text-base sm:text-lg flex items-center justify-center gap-1 shadow-md active:scale-95"
           title="Menü"
         >
           ⏸️
@@ -1458,24 +1462,32 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
       {/* Inventory Modal */}
       {inventoryOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#c6c6c6] border-4 border-[#373737] p-4 sm:p-6 w-full max-w-xl flex flex-col gap-4 text-black shadow-2xl rounded">
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setInventoryOpen(false);
+          }}
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4"
+        >
+          <div className="bg-[#c6c6c6] border-4 border-[#373737] p-3 sm:p-5 w-full max-w-xl max-h-[92vh] overflow-y-auto flex flex-col gap-3 text-black shadow-2xl rounded">
             <div className="flex justify-between items-center border-b-2 border-gray-500 pb-2">
-              <div className="text-2xl sm:text-3xl font-bold text-black flex items-center gap-2">
-                <span>🎒 Envanter (Survival & Server Sync)</span>
+              <div className="text-xl sm:text-2xl font-bold text-black flex items-center gap-2 truncate">
+                <span>🎒 Envanter</span>
+                <span className="text-xs sm:text-sm font-normal text-gray-700 font-mono hidden sm:inline">(Survival & Server Sync)</span>
               </div>
               <button 
                 onClick={() => setInventoryOpen(false)}
-                className="px-3 py-1 bg-red-600 text-white font-bold text-lg hover:bg-red-500 rounded"
+                className="w-10 h-10 bg-red-600 active:bg-red-700 hover:bg-red-500 text-white font-bold text-xl rounded flex items-center justify-center shadow flex-shrink-0"
+                aria-label="Kapat"
+                title="Kapat"
               >
-                X
+                ✕
               </button>
             </div>
 
             {/* Hotbar Section */}
             <div>
-              <div className="text-sm font-bold text-gray-700 mb-1">Hızlı Erişim (Hotbar 1-9)</div>
-              <div className="grid grid-cols-9 gap-1.5 bg-[#8b8b8b] p-2.5 border-2 border-inset border-gray-600 rounded">
+              <div className="text-xs sm:text-sm font-bold text-gray-700 mb-1">Hızlı Erişim (Hotbar 1-9)</div>
+              <div className="grid grid-cols-9 gap-1 sm:gap-1.5 bg-[#8b8b8b] p-1.5 sm:p-2.5 border-2 border-inset border-gray-600 rounded">
                 {hotbar.map((item, idx) => (
                   <div 
                     key={`hb-${idx}`}
@@ -1483,7 +1495,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                       soundManager.playPop();
                       handleSelectHotbarSlot(idx);
                     }}
-                    className={`w-10 h-10 sm:w-12 sm:h-12 bg-[#c6c6c6] border-2 cursor-pointer flex flex-col items-center justify-center text-[10px] sm:text-xs font-bold transition-transform ${
+                    className={`w-7 h-7 sm:w-11 sm:h-11 bg-[#c6c6c6] border-2 cursor-pointer flex flex-col items-center justify-center text-[9px] sm:text-xs font-bold transition-transform ${
                       idx === selectedHotbarIndex ? 'border-yellow-500 bg-yellow-100 scale-105 shadow' : 'border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] hover:bg-gray-300'
                     }`}
                   >
@@ -1496,10 +1508,10 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
             {/* Main Inventory Section */}
             <div>
-              <div className="text-sm font-bold text-gray-700 mb-1">
+              <div className="text-xs sm:text-sm font-bold text-gray-700 mb-1">
                 {server ? 'Sunucu Envanteri (Minecraft)' : 'Yaratıcı Envanter'}
               </div>
-              <div className="grid grid-cols-9 gap-1.5 bg-[#8b8b8b] p-2.5 border-2 border-inset border-gray-600 rounded max-h-[40vh] overflow-y-auto">
+              <div className="grid grid-cols-9 gap-1 sm:gap-1.5 bg-[#8b8b8b] p-1.5 sm:p-2.5 border-2 border-inset border-gray-600 rounded max-h-[35vh] overflow-y-auto">
                 {(server 
                   ? (serverInventory.length > 0 ? serverInventory : Array.from({ length: 27 }, () => ({ type: 'air' as BlockType, count: 0, name: 'Boş' })))
                   : (serverInventory.length > 0 ? serverInventory : initialHotbarItems)
@@ -1512,7 +1524,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                         handleSelectHotbarSlot(idx % 9);
                       }
                     }}
-                    className={`w-10 h-10 sm:w-12 sm:h-12 bg-[#c6c6c6] border-2 border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] flex flex-col items-center justify-center text-[10px] sm:text-xs font-bold ${
+                    className={`w-7 h-7 sm:w-11 sm:h-11 bg-[#c6c6c6] border-2 border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] flex flex-col items-center justify-center text-[9px] sm:text-xs font-bold ${
                       item.type !== 'air' ? 'cursor-pointer hover:bg-gray-300' : 'cursor-default opacity-50'
                     }`}
                     title={item.name || item.type}
@@ -1525,23 +1537,48 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                 ))}
               </div>
             </div>
+
+            {/* Mobile-Friendly Exit Button */}
+            <button
+              onClick={() => {
+                soundManager.playClick();
+                setInventoryOpen(false);
+              }}
+              className="w-full py-2.5 bg-gray-800 hover:bg-gray-700 active:bg-gray-900 text-white font-bold text-base sm:text-lg rounded border-2 border-gray-600 shadow mt-1"
+            >
+              ✕ Kapat ve Oyuna Dön
+            </button>
           </div>
         </div>
       )}
 
       {/* Pause Menu */}
       {paused && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#2e2e2e] border-4 border-[#444] p-6 sm:p-8 w-full max-w-md flex flex-col gap-3 sm:gap-4 shadow-2xl rounded">
-            <div className="text-3xl sm:text-4xl text-center text-white font-bold mb-2">Oyun Duraklatıldı</div>
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setPaused(false);
+          }}
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4"
+        >
+          <div className="bg-[#2e2e2e] border-4 border-[#444] p-4 sm:p-6 w-full max-w-md max-h-[92vh] overflow-y-auto flex flex-col gap-2.5 sm:gap-3 shadow-2xl rounded">
+            <div className="flex justify-between items-center border-b border-gray-600 pb-2 mb-1">
+              <div className="text-2xl sm:text-3xl text-center text-white font-bold">Oyun Duraklatıldı</div>
+              <button
+                onClick={() => setPaused(false)}
+                className="w-9 h-9 bg-red-600 active:bg-red-700 text-white font-bold text-lg rounded flex items-center justify-center shadow flex-shrink-0"
+                aria-label="Kapat"
+              >
+                ✕
+              </button>
+            </div>
             <button
               onClick={() => {
                 soundManager.playClick();
                 setPaused(false);
               }}
-              className="py-2.5 sm:py-3 bg-[#727272] hover:bg-[#858585] text-white border-2 border-t-[#b5b5b5] border-l-[#b5b5b5] border-b-[#3d3d3d] border-r-[#3d3d3d] text-xl sm:text-2xl font-bold"
+              className="py-2.5 sm:py-3 bg-[#4a7c34] hover:bg-[#5b9640] active:bg-[#3d6929] text-white border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-xl sm:text-2xl font-bold"
             >
-              Oyuna Dön (Resume)
+              ▶ Oyuna Dön (Resume)
             </button>
             <button
               onClick={() => {
@@ -1551,7 +1588,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               }}
               className="py-2.5 sm:py-3 bg-[#727272] hover:bg-[#858585] text-white border-2 border-t-[#b5b5b5] border-l-[#b5b5b5] border-b-[#3d3d3d] border-r-[#3d3d3d] text-xl sm:text-2xl font-bold"
             >
-              Envanter (Inventory)
+              🎒 Envanter (Inventory)
             </button>
             <button
               onClick={() => {
@@ -1561,16 +1598,39 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               }}
               className="py-2.5 sm:py-3 bg-[#3b82f6] hover:bg-[#2563eb] text-white border-2 border-t-[#93c5fd] border-l-[#93c5fd] border-b-[#1e40af] border-r-[#1e40af] text-xl sm:text-2xl font-bold"
             >
-              Chunkları Yenile
+              🔄 Chunkları Yenile
             </button>
             <button
               onClick={() => {
                 soundManager.playClick();
                 onExit();
               }}
-              className="py-2.5 sm:py-3 bg-[#a82020] hover:bg-[#c93030] text-white border-2 border-t-[#f87171] border-l-[#f87171] border-b-[#7f1d1d] border-r-[#7f1d1d] text-xl sm:text-2xl font-bold mt-2"
+              className="py-2.5 sm:py-3 bg-[#a82020] hover:bg-[#c93030] text-white border-2 border-t-[#f87171] border-l-[#f87171] border-b-[#7f1d1d] border-r-[#7f1d1d] text-xl sm:text-2xl font-bold mt-1"
             >
-              Ana Menüye Kaydet ve Çık
+              🚪 Ana Menüye Kaydet ve Çık
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Disconnected / Kicked Modal (Easy mobile exit) */}
+      {disconnectedReason && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 select-none font-['VT323']">
+          <div className="bg-[#241712] border-4 border-[#682a20] p-6 sm:p-8 w-full max-w-lg flex flex-col gap-4 text-center shadow-2xl rounded text-white max-h-[92vh] overflow-y-auto">
+            <div className="text-4xl sm:text-5xl font-bold text-red-500">
+              ⚠️ Bağlantı Kesildi
+            </div>
+            <div className="bg-black/70 border border-gray-700 p-4 text-xl sm:text-2xl text-yellow-200 whitespace-pre-wrap font-mono">
+              {disconnectedReason}
+            </div>
+            <button
+              onClick={() => {
+                soundManager.playClick();
+                onExit();
+              }}
+              className="w-full py-3 bg-[#4a7c34] hover:bg-[#5b9640] active:bg-[#3d6929] text-white border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-2xl font-bold shadow-xl"
+            >
+              Ana Menüye Dön
             </button>
           </div>
         </div>
@@ -1578,28 +1638,28 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
       {/* Minecraft Multiplayer Server Loading & Protocol Handshake Screen */}
       {server && serverLoading && (
-        <div className="fixed inset-0 bg-[#1e140f]/95 backdrop-blur-md flex flex-col items-center justify-center z-50 p-6 text-white text-center select-none font-['VT323']">
-          <div className="w-16 h-16 mb-4 flex items-center justify-center animate-bounce bg-[#55a038] border-4 border-[#356920] shadow-2xl text-3xl">
+        <div className="fixed inset-0 bg-[#1e140f]/95 backdrop-blur-md flex flex-col items-center justify-center z-50 p-4 sm:p-6 text-white text-center select-none font-['VT323'] max-h-screen overflow-y-auto">
+          <div className="w-14 h-14 sm:w-16 sm:h-16 mb-3 sm:mb-4 flex items-center justify-center animate-bounce bg-[#55a038] border-4 border-[#356920] shadow-2xl text-3xl flex-shrink-0">
             ⛏️
           </div>
-          <h2 className="text-3xl sm:text-5xl font-bold text-yellow-400 mb-1 drop-shadow-md">
+          <h2 className="text-2xl sm:text-4xl font-bold text-yellow-400 mb-1 drop-shadow-md">
             {server.name}
           </h2>
-          <p className="text-lg sm:text-xl text-gray-400 mb-6 font-mono">
+          <p className="text-base sm:text-lg text-gray-400 mb-4 font-mono">
             {server.ip}:{server.port}
           </p>
 
-          <div className="w-full max-w-md bg-black/70 border-2 border-white/30 p-5 rounded-lg mb-6 shadow-2xl flex flex-col gap-3">
-            <div className="flex justify-between items-center text-sm sm:text-base text-gray-400 font-mono">
+          <div className="w-full max-w-md bg-black/70 border-2 border-white/30 p-4 sm:p-5 rounded-lg mb-4 sm:mb-6 shadow-2xl flex flex-col gap-2.5">
+            <div className="flex justify-between items-center text-xs sm:text-sm text-gray-400 font-mono">
               <span>Protokol Durumu:</span>
               <span className="text-emerald-400 font-bold">
                 {blocksCount > 0 ? `${blocksCount} blok alındı` : 'Minecraft Java Bridge'}
               </span>
             </div>
-            <p className="text-xl sm:text-2xl text-yellow-200 font-bold animate-pulse">
+            <p className="text-lg sm:text-xl text-yellow-200 font-bold animate-pulse">
               {serverStatusText}
             </p>
-            <div className="w-full bg-gray-900 h-3 rounded-full overflow-hidden border border-gray-700 mt-2">
+            <div className="w-full bg-gray-900 h-3 rounded-full overflow-hidden border border-gray-700 mt-1">
               <div 
                 className="bg-emerald-500 h-full transition-all duration-300"
                 style={{ width: blocksCount > 0 ? `${Math.min(100, Math.max(25, blocksCount / 5))}%` : '15%' }}
@@ -1610,18 +1670,18 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-4 justify-center">
+          <div className="flex flex-wrap gap-3 sm:gap-4 justify-center">
             <button
               onClick={() => setServerLoading(false)}
-              className="px-6 py-2.5 bg-[#4a7c34] hover:bg-[#5b9640] border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-xl font-bold shadow-lg"
+              className="px-5 sm:px-6 py-2 sm:py-2.5 bg-[#4a7c34] hover:bg-[#5b9640] border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-lg sm:text-xl font-bold shadow-lg"
             >
               Dünyaya Devam Et
             </button>
             <button
               onClick={onExit}
-              className="px-6 py-2.5 bg-[#a82020] hover:bg-[#c93030] border-2 border-t-[#f87171] border-l-[#f87171] border-b-[#7f1d1d] border-r-[#7f1d1d] text-xl font-bold shadow-lg"
+              className="px-5 sm:px-6 py-2 sm:py-2.5 bg-[#a82020] hover:bg-[#c93030] border-2 border-t-[#f87171] border-l-[#f87171] border-b-[#7f1d1d] border-r-[#7f1d1d] text-lg sm:text-xl font-bold shadow-lg"
             >
-              İptal Et
+              İptal Et / Çıkış
             </button>
           </div>
         </div>

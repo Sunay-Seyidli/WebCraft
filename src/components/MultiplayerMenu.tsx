@@ -181,7 +181,7 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
   const selectedServer = servers.find((s) => s.id === selectedId) || servers[0];
 
   return (
-    <div className="relative w-full h-screen overflow-hidden flex flex-col items-center justify-between p-4 sm:p-6 select-none font-['VT323'] text-xl sm:text-2xl">
+    <div className="relative w-full min-h-screen h-full overflow-y-auto flex flex-col items-center justify-between p-3 sm:p-6 select-none font-['VT323'] text-xl sm:text-2xl">
       {/* Background */}
       <div 
         className="absolute inset-0 bg-cover bg-center filter brightness-40"
@@ -389,31 +389,45 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
 
       {/* Add Server Modal (Minecraft Style Dialog) */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#2b2b2b] border-4 border-[#444] p-6 w-full max-w-lg flex flex-col gap-4 text-white shadow-2xl">
-            <div className="text-3xl font-bold text-yellow-300 text-center border-b-2 border-gray-600 pb-2">
-              Sunucu Bilgisini Düzenle (Add Server)
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowAddModal(false);
+          }}
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4"
+        >
+          <div className="bg-[#2b2b2b] border-4 border-[#444] p-4 sm:p-6 w-full max-w-lg max-h-[92vh] overflow-y-auto flex flex-col gap-3 sm:gap-4 text-white shadow-2xl rounded">
+            <div className="flex justify-between items-center border-b-2 border-gray-600 pb-2">
+              <div className="text-2xl sm:text-3xl font-bold text-yellow-300">
+                Sunucu Ekle (Add Server)
+              </div>
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="w-9 h-9 bg-red-600 active:bg-red-700 text-white font-bold text-lg rounded flex items-center justify-center shadow flex-shrink-0"
+                aria-label="Kapat"
+              >
+                ✕
+              </button>
             </div>
 
             <div className="flex flex-col gap-1">
-              <label className="text-gray-300 text-lg">Sunucu Adı (Server Name):</label>
+              <label className="text-gray-300 text-base sm:text-lg">Sunucu Adı (Server Name):</label>
               <input
                 type="text"
                 value={newServerName}
                 onChange={(e) => setNewServerName(e.target.value)}
-                className="bg-black border-2 border-gray-600 px-3 py-2 text-2xl text-white outline-none focus:border-yellow-400"
+                className="bg-black border-2 border-gray-600 px-3 py-2 text-xl sm:text-2xl text-white outline-none focus:border-yellow-400 rounded"
                 placeholder="Örnek: Minecraft Sunucum"
                 autoFocus
               />
             </div>
 
             <div className="flex flex-col gap-1">
-              <label className="text-gray-300 text-lg">Sunucu Adresi (Server Address / IP:Port):</label>
+              <label className="text-gray-300 text-base sm:text-lg">Sunucu Adresi (Server Address / IP:Port):</label>
               <input
                 type="text"
                 value={newServerAddress}
                 onChange={(e) => setNewServerAddress(e.target.value)}
-                className="bg-black border-2 border-gray-600 px-3 py-2 text-2xl text-white outline-none focus:border-yellow-400 font-mono"
+                className="bg-black border-2 border-gray-600 px-3 py-2 text-xl sm:text-2xl text-white outline-none focus:border-yellow-400 font-mono rounded"
                 placeholder="example.com veya 192.168.1.100:25565"
               />
               <span className="text-xs text-gray-400">
@@ -424,16 +438,16 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
               </span>
             </div>
 
-            <div className="flex gap-4 mt-2">
+            <div className="flex gap-3 sm:gap-4 mt-2">
               <button
                 onClick={handleAddServer}
-                className="flex-1 py-3 bg-[#42722b] hover:bg-[#538f36] text-white border-2 border-t-[#85c963] border-l-[#85c963] border-b-[#254217] border-r-[#254217] text-2xl font-bold"
+                className="flex-1 py-2.5 sm:py-3 bg-[#42722b] hover:bg-[#538f36] text-white border-2 border-t-[#85c963] border-l-[#85c963] border-b-[#254217] border-r-[#254217] text-xl sm:text-2xl font-bold"
               >
                 Tamam (Done)
               </button>
               <button
                 onClick={() => setShowAddModal(false)}
-                className="flex-1 py-3 bg-[#727272] hover:bg-[#858585] text-white border-2 border-t-[#b5b5b5] border-l-[#b5b5b5] border-b-[#3d3d3d] border-r-[#3d3d3d] text-2xl font-bold"
+                className="flex-1 py-2.5 sm:py-3 bg-[#727272] hover:bg-[#858585] text-white border-2 border-t-[#b5b5b5] border-l-[#b5b5b5] border-b-[#3d3d3d] border-r-[#3d3d3d] text-xl sm:text-2xl font-bold"
               >
                 İptal (Cancel)
               </button>
@@ -444,15 +458,29 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
 
       {/* Direct Connect Modal */}
       {showDirectModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#2b2b2b] border-4 border-[#444] p-6 w-full max-w-lg flex flex-col gap-4 text-white shadow-2xl">
-            <div className="text-3xl font-bold text-yellow-300 text-center border-b-2 border-gray-600 pb-2">
-              🖧 Doğrudan Bağlantı (Direct Connect)
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowDirectModal(false);
+          }}
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4"
+        >
+          <div className="bg-[#2b2b2b] border-4 border-[#444] p-4 sm:p-6 w-full max-w-lg max-h-[92vh] overflow-y-auto flex flex-col gap-3 sm:gap-4 text-white shadow-2xl rounded">
+            <div className="flex justify-between items-center border-b-2 border-gray-600 pb-2">
+              <div className="text-2xl sm:text-3xl font-bold text-yellow-300">
+                🖧 Doğrudan Bağlantı (Direct Connect)
+              </div>
+              <button
+                onClick={() => setShowDirectModal(false)}
+                className="w-9 h-9 bg-red-600 active:bg-red-700 text-white font-bold text-lg rounded flex items-center justify-center shadow flex-shrink-0"
+                aria-label="Kapat"
+              >
+                ✕
+              </button>
             </div>
-            <div className="text-lg text-gray-300">
+            <div className="text-base sm:text-lg text-gray-300">
               Girmek istediğiniz Minecraft 1.21.4 sunucu adresini yazın:
             </div>
-            <div className="text-sm text-amber-300 bg-black/50 border border-amber-600 p-3 rounded">
+            <div className="text-xs sm:text-sm text-amber-300 bg-black/50 border border-amber-600 p-2.5 sm:p-3 rounded">
               <span className="font-bold">⚠️ Önemli:</span> Bu istemci sadece <span className="font-bold">OFFLINE-MODE</span> sunuculara bağlanabilir.
               <br />Hypixel ve benzeri büyük sunucular çalışmaz.
             </div>
@@ -460,11 +488,11 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
               type="text"
               value={directAddress}
               onChange={(e) => setDirectAddress(e.target.value)}
-              className="bg-black border-2 border-gray-600 px-3 py-2 text-2xl text-white outline-none focus:border-yellow-400 font-mono"
+              className="bg-black border-2 border-gray-600 px-3 py-2 text-xl sm:text-2xl text-white outline-none focus:border-yellow-400 font-mono rounded"
               placeholder="localhost:25565 veya example.com"
               autoFocus
             />
-            <div className="flex gap-4 mt-2">
+            <div className="flex gap-3 sm:gap-4 mt-2">
               <button
                 onClick={() => {
                   soundManager.playClick();
@@ -487,13 +515,13 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
                   };
                   handleJoin(directServer);
                 }}
-                className="flex-1 py-3 bg-[#42722b] hover:bg-[#538f36] text-white border-2 border-t-[#85c963] border-l-[#85c963] border-b-[#254217] border-r-[#254217] text-2xl font-bold"
+                className="flex-1 py-2.5 sm:py-3 bg-[#42722b] hover:bg-[#538f36] text-white border-2 border-t-[#85c963] border-l-[#85c963] border-b-[#254217] border-r-[#254217] text-xl sm:text-2xl font-bold"
               >
                 Sunucuya Katıl
               </button>
               <button
                 onClick={() => setShowDirectModal(false)}
-                className="flex-1 py-3 bg-[#727272] hover:bg-[#858585] text-white border-2 border-t-[#b5b5b5] border-l-[#b5b5b5] border-b-[#3d3d3d] border-r-[#3d3d3d] text-2xl font-bold"
+                className="flex-1 py-2.5 sm:py-3 bg-[#727272] hover:bg-[#858585] text-white border-2 border-t-[#b5b5b5] border-l-[#b5b5b5] border-b-[#3d3d3d] border-r-[#3d3d3d] text-xl sm:text-2xl font-bold"
               >
                 İptal
               </button>
