@@ -48,6 +48,25 @@ export interface GameSettings {
   skin: 'steve' | 'alex' | 'custom';
   customSkinColor: string;
   playerName?: string;
+  showScoreboard?: boolean;
+  showPing?: boolean;
+}
+
+export interface ScoreboardItem {
+  name: string;
+  score: number;
+}
+
+export interface ScoreboardData {
+  title: string;
+  items: ScoreboardItem[];
+}
+
+export interface TabPlayer {
+  username: string;
+  displayName?: string;
+  ping: number;
+  gameMode?: string;
 }
 
 export interface ChatMessage {

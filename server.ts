@@ -213,11 +213,11 @@ function extractChunkColumnBlocks(bot: any, chunkStartX: number, chunkStartZ: nu
 
         consecutiveSolid++;
 
-        // Keep top 3 layers of each surface (plus transparent/liquid blocks like water, leaves, glass)
-        if (consecutiveSolid <= 3 || b.transparent || b.name === "water" || b.name === "lava") {
+        // Surface blocks only: keep top 1 solid surface block layer (plus transparent/liquid/leaves)
+        if (consecutiveSolid <= 1 || b.transparent || b.name === "water" || b.name === "lava" || b.name === "glass" || b.name === "oak_leaves") {
           blocks.push({ x, y, z, type: b.name });
-        } else if (consecutiveSolid > 7) {
-          // deep solid stone/dirt underneath - skip until next air gap
+        } else if (consecutiveSolid > 2) {
+          // deep solid block underneath - skip until next air gap
           continue;
         }
       }
@@ -669,6 +669,74 @@ async function startServer() {
         sendChatMessage("Sistem", "Öldünüz!", true);
       });
 
+      // ==========================================
+      // TAB LIST & SCOREBOARD PROTOCOL SYNC
+      // ==========================================
+      const sendTabList = () => {
+        if (ws.readyState !== WebSocket.OPEN || !bot) return;
+        try {
+          const list: any[] = [];
+          if (bot.players) {
+            for (const name in bot.players) {
+              const p = bot.players[name];
+              if (p) {
+                list.push({
+                  username: p.username || name,
+                  displayName: cleanMinecraftText(p.displayName) || p.username || name,
+                  ping: p.ping ?? 0,
+                  gameMode: p.gamemode ?? "survival",
+                });
+              }
+            }
+          }
+          if (list.length === 0 && bot.username) {
+            list.push({
+              username: bot.username,
+              displayName: bot.username,
+              ping: bot.player?.ping ?? 0,
+              gameMode: bot.game?.gameMode ?? "survival",
+            });
+          }
+          ws.send(JSON.stringify({ type: "tabList", players: list }));
+        } catch {}
+      };
+
+      const sendScoreboard = () => {
+        if (ws.readyState !== WebSocket.OPEN || !bot) return;
+        try {
+          const sidebar = (bot as any).scoreboard?.sidebar;
+          if (sidebar) {
+            const title = cleanMinecraftText(sidebar.title) || "SKOR TABLOSU";
+            const items: { name: string; score: number }[] = [];
+            if (sidebar.itemsMap) {
+              for (const key in sidebar.itemsMap) {
+                const item = sidebar.itemsMap[key];
+                items.push({
+                  name: cleanMinecraftText(item.displayName || item.name || key) || key,
+                  score: typeof item.value === "number" ? item.value : 0,
+                });
+              }
+            }
+            items.sort((a, b) => b.score - a.score);
+            ws.send(JSON.stringify({ type: "scoreboard", title, items: items.slice(0, 15) }));
+          }
+        } catch {}
+      };
+
+      bot.on("playerJoined", () => sendTabList());
+      bot.on("playerLeft", () => sendTabList());
+      bot.on("playerUpdated", () => sendTabList());
+      (bot as any).on("scoreboardCreated", sendScoreboard);
+      (bot as any).on("scoreboardScoreUpdated", sendScoreboard);
+      (bot as any).on("scoreboardPosition", sendScoreboard);
+      (bot as any).on("scoreUpdated", sendScoreboard);
+
+      const tabScoreboardTimer = setInterval(() => {
+        sendTabList();
+        sendScoreboard();
+      }, 2500);
+      ws.on("close", () => clearInterval(tabScoreboardTimer));
+
       // Raw Protocol Chat Packets (Catches 1.19+ Paper / Spigot / Velocity packets safely)
       if (bot._client) {
         const rawChatHandler = (data: any, metaName: string) => {
@@ -920,50 +988,55 @@ async function startServer() {
             }
           }
 
-          // 2. Chat & Commands
+          // 2. Ping / Pong latency check
+          else if (msg.type === "ping") {
+            const botPing = (bot.player && bot.player.ping) || (bot.players && bot.players[bot.username]?.ping) || 0;
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(
+                JSON.stringify({
+                  type: "pong",
+                  clientTime: msg.time,
+                  serverPing: botPing,
+                })
+              );
+            }
+          }
+
+          // 3. Chat & Commands (Immediate 0ms dispatch)
           else if (msg.type === "chat" && msg.text) {
             const text = msg.text.trim();
             if (!text) return;
             console.log(`[MC Bridge] Client sending chat/command: "${text}"`);
-            try {
-              if (typeof bot.chat === "function") {
+            
+            if (text.startsWith("/")) {
+              const cmd = text.slice(1);
+              let sent = false;
+              if (bot._client && typeof bot._client.write === "function") {
+                try {
+                  bot._client.write("chat_command", { command: cmd });
+                  sent = true;
+                } catch {
+                  try {
+                    bot._client.write("chat_command", {
+                      command: cmd,
+                      timestamp: BigInt(Date.now()),
+                      salt: 0n,
+                      argumentSignatures: [],
+                      signedPreview: false,
+                      messageCount: 0,
+                      acknowledged: Buffer.alloc(3),
+                      previousMessages: [],
+                    });
+                    sent = true;
+                  } catch {}
+                }
+              }
+              if (!sent && typeof bot.chat === "function") {
                 bot.chat(text);
               }
-            } catch (err: any) {
-              console.warn(`[MC Bridge] bot.chat warning:`, err?.message);
-              // Fallback only if bot.chat threw and bot._client exists
-              try {
-                if (text.startsWith("/")) {
-                  if (bot._client && typeof bot._client.write === "function") {
-                    // Try unsigned command first (standard for 1.20.5+)
-                    try {
-                      bot._client.write("chat_command", {
-                        command: text.slice(1),
-                      });
-                    } catch {
-                      bot._client.write("chat_command", {
-                        command: text.slice(1),
-                        timestamp: BigInt(Date.now()),
-                        salt: 0n,
-                        argumentSignatures: [],
-                        signedPreview: false,
-                        messageCount: 0,
-                        acknowledged: Buffer.alloc(3),
-                        previousMessages: [],
-                      });
-                    }
-                  }
-                } else if (bot._client && typeof bot._client.write === "function") {
-                  bot._client.write("chat_message", {
-                    message: text,
-                    timestamp: BigInt(Date.now()),
-                    salt: 0n,
-                    offset: 0,
-                    acknowledged: Buffer.alloc(3),
-                  });
-                }
-              } catch (fallbackErr: any) {
-                console.warn(`[MC Bridge] Chat fallback warning:`, fallbackErr?.message);
+            } else {
+              if (typeof bot.chat === "function") {
+                bot.chat(text);
               }
             }
           }
