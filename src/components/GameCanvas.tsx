@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { WorldInfo, ServerInfo, GameSettings, ChatMessage, BlockType, InventoryItem } from '../types';
 import { soundManager } from '../utils/audio';
-import { blockTextures, initTextures } from '../utils/textures';
+import { blockTextures, initTextures, mapMinecraftBlock } from '../utils/textures';
 
 interface GameCanvasProps {
   world?: WorldInfo;
@@ -28,7 +28,15 @@ export const BLOCK_NAMES: Record<BlockType, string> = {
   sand: 'Kum',
   diamond_ore: 'Elmas Cevheri',
   gold_ore: 'Altın Cevheri',
-  obsidian: 'Obsidyen'
+  obsidian: 'Obsidyen',
+  iron_block: 'Demir Bloğu',
+  crafting_table: 'Çalışma Masası',
+  furnace: 'Fırın',
+  wool: 'Yün',
+  bookshelf: 'Kitaplık',
+  tnt: 'TNT',
+  netherrack: 'Nether Taşı',
+  glowstone: 'Işık Taşı'
 };
 
 const initialHotbarItems: InventoryItem[] = [
@@ -69,13 +77,18 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
+  const [serverLoading, setServerLoading] = useState(!!server);
+  const [serverStatusText, setServerStatusText] = useState(
+    server ? `${server.name} (${server.ip}:${server.port}) sunucusuna bağlanılıyor...` : ''
+  );
+  const [blocksCount, setBlocksCount] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: 'init-msg-1', sender: 'Sistem', text: 'Minecraft 1.21.4 Dünyasına Hoş Geldiniz!', time: '12:00', isSystem: true },
+    { id: 'init-msg-1', sender: 'Sistem', text: 'Minecraft 1.21.4 Web Client Dünyasına Hoş Geldiniz!', time: '12:00', isSystem: true },
     { 
       id: 'init-msg-2', 
       sender: 'Sistem', 
       text: server 
-        ? `Sunucu: ${server.name} (${server.ip}:${server.port}) - TCP WebSocket Köprüsü Aktif` 
+        ? `Sunucu: ${server.name} (${server.ip}:${server.port}) - Minecraft Java Protokolü Aktif` 
         : `Tek Oyunculu Dünya: ${world?.name || 'Yeni Dünya'}`, 
       time: '12:00', 
       isSystem: true 
@@ -83,8 +96,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   ]);
   const [hotbar, setHotbar] = useState<InventoryItem[]>(initialHotbarItems);
   const [selectedHotbarIndex, setSelectedHotbarIndex] = useState(0);
-  const [health] = useState(20);
-  const [hunger] = useState(20);
+  const [health, setHealth] = useState(20);
+  const [hunger, setHunger] = useState(20);
   const [fps, setFps] = useState(60);
   const [playerPos, setPlayerPos] = useState({ x: '0.0', y: '12.0', z: '0.0' });
   const [targetedBlock, setTargetedBlock] = useState<TargetedBlockData | null>(null);
@@ -229,11 +242,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       blocksMap.set(key, mesh);
     };
 
-    // Generate Natural Terrain (SINGLEPLAYER / no server only).
-    // When connected to a real server, the world instead comes from the
-    // WebSocket bridge's chunk heightmap data — see buildTerrainColumn below.
-    const half = Math.floor(worldSize / 2);
+    // Generate Natural Terrain ONLY for Singleplayer
     if (!server) {
+      const half = Math.floor(worldSize / 2);
       for (let x = -half; x < half; x++) {
         for (let z = -half; z < half; z++) {
           addBlockAt(x, 0, z, 'bedrock');
@@ -265,27 +276,14 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
           }
         }
       }
-    }
-
-    // Builds a simple terrain column from a real server's heightmap value
-    // (MOTION_BLOCKING, i.e. the y of the topmost solid block at x,z).
-    // This is a simplified stand-in for full paletted block-state decoding:
-    // it shows the real shape of the server's world using a small set of
-    // representative block types, so players entering a real server see
-    // that server's actual terrain contours rather than a generic filler.
-    const buildTerrainColumn = (wx: number, wz: number, topY: number) => {
-      const clampedTop = Math.max(1, Math.min(60, topY));
-      addBlockAt(wx, 0, wz, 'bedrock');
-      for (let y = 1; y <= clampedTop; y++) {
-        if (y === clampedTop) {
-          addBlockAt(wx, y, wz, 'grass');
-        } else if (y > clampedTop - 3) {
-          addBlockAt(wx, y, wz, 'dirt');
-        } else {
-          addBlockAt(wx, y, wz, 'stone');
+    } else {
+      // In multiplayer, create a temporary transparent staging glass platform so the player doesn't fall into the void before chunks arrive
+      for (let px = -2; px <= 2; px++) {
+        for (let pz = -2; pz <= 2; pz++) {
+          addBlockAt(px, 10, pz, 'glass');
         }
       }
-    };
+    }
 
     // Player Physics & Controls State
     const player = {
@@ -400,6 +398,18 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       blocksMap.delete(key);
       soundManager.playDig(target.type);
 
+      // Send dig packet to Minecraft server via WebSocket bridge
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'dig',
+            x: target.x,
+            y: target.y,
+            z: target.z,
+          })
+        );
+      }
+
       setHotbar((prev) => {
         const updated = [...prev];
         const foundIdx = updated.findIndex((item) => item.type === target.type);
@@ -457,6 +467,23 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
       addBlockAt(placeX, placeY, placeZ, currentItem.type);
       soundManager.playDig(currentItem.type);
+
+      // Send place packet to Minecraft server via WebSocket bridge
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'place',
+            x: target.x,
+            y: target.y,
+            z: target.z,
+            face: {
+              x: Math.round(target.faceNormal.x),
+              y: Math.round(target.faceNormal.y),
+              z: Math.round(target.faceNormal.z),
+            },
+          })
+        );
+      }
 
       setHotbar((prev) => {
         const updated = [...prev];
@@ -555,134 +582,88 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     renderer.domElement.addEventListener('touchmove', handleTouchMove, { passive: true });
     renderer.domElement.addEventListener('touchend', handleTouchEnd, { passive: true });
 
-    // Connect WebSocket <-> Real Minecraft Server bridge if server is specified
+    // Connect WebSocket Minecraft Java Protocol Bridge if server is specified
     if (server) {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${window.location.host}/ws-proxy?host=${encodeURIComponent(server.ip)}&port=${server.port}&username=WebPlayer`;
+      const playerName = settings.skin === 'alex' ? 'Alex' : settings.skin === 'steve' ? 'Steve' : 'WebPlayer';
+      const wsUrl = `${wsProtocol}//${window.location.host}/ws-proxy?host=${encodeURIComponent(server.ip)}&port=${server.port}&username=${encodeURIComponent(playerName)}&mode=protocol`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        addChatMessage('Sistem', `${server.name} sunucusuna bağlanıyor...`, true);
+        addChatMessage('Sistem', `Minecraft Java Protokol Köprüsü bağlandı: ${server.name} (${server.ip}:${server.port})`, true);
       };
 
       ws.onmessage = (event) => {
-        if (typeof event.data !== 'string') return;
-        try {
-          const msg = JSON.parse(event.data);
-
-          switch (msg.type) {
-            case 'tcp_connected':
-              addChatMessage('Sistem', `TCP Köprüsü: ${msg.host}:${msg.port}`, true);
-              break;
-
-            case 'state':
-              if (msg.state === 'play') {
-                addChatMessage('Sistem', 'Protokol: Play State aktif ✓', true);
-              }
-              break;
-
-            case 'login':
-              addChatMessage('Sistem', `Login başarılı! Oyun Modu: ${msg.gameMode}`, true);
-              break;
-
-            case 'joined_world':
-              addChatMessage('Sistem', `✓ ${msg.username} dünyaya katıldı!`, true);
-              // Place player at spawn or floating spawn
-              player.y = 64;
-              break;
-
-            case 'spawn_position':
-              if (msg.x !== undefined && msg.y !== undefined && msg.z !== undefined) {
-                player.x = msg.x + 0.5;
-                player.y = msg.y + 1.5;
-                player.z = msg.z + 0.5;
-                addChatMessage('Sistem', `Spawn: ${Math.round(msg.x)}, ${Math.round(msg.y)}, ${Math.round(msg.z)}`, true);
-              }
-              break;
-
-            case 'position':
-              // Server wants us at this position (teleport)
-              if (msg.x !== undefined && msg.y !== undefined && msg.z !== undefined) {
-                player.x = msg.x;
-                player.y = msg.y;
-                player.z = msg.z;
-              }
-              break;
-
-            case 'chunk':
-              // Server sent chunk data; decode heightmap and build terrain
-              if (msg.heightmapPacked && Array.isArray(msg.heightmapPacked)) {
-                const chunkX = msg.x;
-                const chunkZ = msg.z;
-                // Heightmap is packed as 64 longs (int64) representing 16x16 positions
-                // Each long covers 2x2 = 4 blocks, so 16x16 = 256 positions total.
-                // This is complex; for now, approximate by taking block heights from the packed array.
-                // This is a simplified decode — real heightmap decoding is more complex.
-                for (let lx = 0; lx < 16; lx++) {
-                  for (let lz = 0; lz < 16; lz++) {
-                    const idx = lz * 16 + lx;
-                    const heightValue = Math.floor((msg.heightmapPacked[idx % msg.heightmapPacked.length] || 64) / 4) + 1;
-                    const wx = chunkX * 16 + lx;
-                    const wz = chunkZ * 16 + lz;
-                    buildTerrainColumn(wx, wz, Math.min(255, Math.max(0, heightValue)));
-                  }
+        if (typeof event.data === 'string') {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'status') {
+              setServerStatusText(data.message || 'Sunucuya bağlanılıyor...');
+              addChatMessage('Sunucu', data.message, true);
+            } else if (data.type === 'login') {
+              setServerStatusText(`${data.username} olarak giriş yapıldı. Dünya chunkları alınıyor...`);
+              addChatMessage('Sunucu', data.message || `${data.username} sunucuya giriş yaptı.`, true);
+            } else if (data.type === 'spawn') {
+              setServerLoading(false);
+              setServerStatusText('Dünyaya katıldınız!');
+              player.x = data.x;
+              player.y = data.y + 1.6;
+              player.z = data.z;
+              camera.position.set(data.x, data.y + 1.6, data.z);
+              if (typeof data.health === 'number') setHealth(data.health);
+              if (typeof data.food === 'number') setHunger(data.food);
+              addChatMessage('Sunucu', `Dünyaya doğdunuz! X:${data.x.toFixed(1)} Y:${data.y.toFixed(1)} Z:${data.z.toFixed(1)}`, true);
+            } else if (data.type === 'blocks') {
+              // Real blocks streamed from the Minecraft Java server!
+              if (Array.isArray(data.blocks)) {
+                for (const b of data.blocks) {
+                  const mapped = mapMinecraftBlock(b.type);
+                  addBlockAt(b.x, b.y, b.z, mapped);
                 }
+                setBlocksCount((prev) => prev + data.blocks.length);
               }
-              break;
-
-            case 'unload_chunk':
-              // Server unloaded a chunk — remove blocks in that region
-              // For now, we'll just ignore to avoid flickering
-              break;
-
-            case 'health':
-              // Server sent health update
-              if (typeof msg.health === 'number') {
-                addChatMessage('Sistem', `❤ Sağlık: ${msg.health.toFixed(1)}/20`, true);
+            } else if (data.type === 'blockUpdate') {
+              const key = `${data.x},${data.y},${data.z}`;
+              if (!data.blockType || data.blockType === 'air' || data.blockType === 'cave_air' || data.blockType === 'void_air') {
+                const mesh = blocksMap.get(key);
+                if (mesh) {
+                  scene.remove(mesh);
+                  mesh.geometry.dispose();
+                  blocksMap.delete(key);
+                }
+              } else {
+                const mapped = mapMinecraftBlock(data.blockType);
+                addBlockAt(data.x, data.y, data.z, mapped);
               }
-              break;
-
-            case 'player_list':
-              if (Array.isArray(msg.players) && msg.players.length) {
-                addChatMessage('Sistem', `Çevrimiçi: ${msg.players.join(', ')}`, true);
-              }
-              break;
-
-            case 'chat':
-              addChatMessage(msg.sender || 'Oyuncu', msg.text);
-              break;
-
-            case 'system_chat':
-              addChatMessage('Sistem', msg.text, true);
-              break;
-
-            case 'disconnected':
-              addChatMessage('Sistem', `❌ Bağlantı kesildi: ${msg.reason}`, true);
-              break;
-
-            case 'closed':
-              addChatMessage('Sistem', `⚠ Sunucu kapandı.`, true);
-              break;
-
-            case 'error':
-              addChatMessage('Sistem', `⚠ HATA: ${msg.message}`, true);
-              break;
-
-            default:
-              break;
+            } else if (data.type === 'chat') {
+              addChatMessage(data.sender || 'Sunucu', data.text || '');
+            } else if (data.type === 'health') {
+              if (typeof data.health === 'number') setHealth(data.health);
+              if (typeof data.food === 'number') setHunger(data.food);
+            } else if (data.type === 'kicked') {
+              setServerStatusText(`Sunucudan atıldınız: ${data.reason}`);
+              addChatMessage('Sunucu', `Sunucudan atıldınız: ${data.reason}`, true);
+            } else if (data.type === 'error') {
+              setServerStatusText(`Hata: ${data.message}`);
+              addChatMessage('Sistem', `Hata: ${data.message}`, true);
+            } else if (data.type === 'closed') {
+              setServerStatusText(`Sunucu bağlantısı kapandı.`);
+              addChatMessage('Sistem', 'Sunucu bağlantısı kapandı.', true);
+            }
+          } catch {
+            // raw message
           }
-        } catch (err) {
-          // Ignore malformed JSON
         }
       };
 
       ws.onerror = () => {
-        addChatMessage('Sistem', `❌ WebSocket Hatası`, true);
+        setServerStatusText('Sunucuya bağlanılamadı (TCP/Protocol Hatası)');
+        addChatMessage('Sistem', `Sunucuya bağlanılamadı. Render.com üzerinde veya sunucunun online olduğunu kontrol edin.`, true);
       };
 
       ws.onclose = () => {
-        addChatMessage('Sistem', `⚠ Sunucu bağlantısı kapandı.`, true);
+        addChatMessage('Sistem', `Sunucu bağlantısı sonlandı.`, true);
       };
     }
 
@@ -771,12 +752,26 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         const targetZ = camera.position.z - Math.cos(player.yaw) * Math.cos(player.pitch);
         camera.lookAt(targetX, targetY, targetZ);
 
-        if (frameCount % 8 === 0) {
+        if (frameCount % 6 === 0) {
           setPlayerPos({
             x: player.x.toFixed(1),
             y: player.y.toFixed(1),
             z: player.z.toFixed(1)
           });
+
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(
+              JSON.stringify({
+                type: 'move',
+                x: player.x,
+                y: player.y - 1.6,
+                z: player.z,
+                yaw: player.yaw,
+                pitch: player.pitch,
+                onGround: player.vy === 0,
+              })
+            );
+          }
         }
 
         // Raycast Target Highlight
@@ -1144,6 +1139,57 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               className="py-2.5 sm:py-3 bg-[#a82020] hover:bg-[#c93030] text-white border-2 border-t-[#f87171] border-l-[#f87171] border-b-[#7f1d1d] border-r-[#7f1d1d] text-xl sm:text-2xl font-bold mt-2"
             >
               Ana Menüye Kaydet ve Çık
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Minecraft Multiplayer Server Loading & Protocol Handshake Screen */}
+      {server && serverLoading && (
+        <div className="fixed inset-0 bg-[#1e140f]/95 backdrop-blur-md flex flex-col items-center justify-center z-50 p-6 text-white text-center select-none font-['VT323']">
+          <div className="w-16 h-16 mb-4 flex items-center justify-center animate-bounce bg-[#55a038] border-4 border-[#356920] shadow-2xl text-3xl">
+            ⛏️
+          </div>
+          <h2 className="text-3xl sm:text-5xl font-bold text-yellow-400 mb-1 drop-shadow-md">
+            {server.name}
+          </h2>
+          <p className="text-lg sm:text-xl text-gray-400 mb-6 font-mono">
+            {server.ip}:{server.port}
+          </p>
+
+          <div className="w-full max-w-md bg-black/70 border-2 border-white/30 p-5 rounded-lg mb-6 shadow-2xl flex flex-col gap-3">
+            <div className="flex justify-between items-center text-sm sm:text-base text-gray-400 font-mono">
+              <span>Protokol Durumu:</span>
+              <span className="text-emerald-400 font-bold">
+                {blocksCount > 0 ? `${blocksCount} blok alındı` : 'Minecraft Java Bridge'}
+              </span>
+            </div>
+            <p className="text-xl sm:text-2xl text-yellow-200 font-bold animate-pulse">
+              {serverStatusText}
+            </p>
+            <div className="w-full bg-gray-900 h-3 rounded-full overflow-hidden border border-gray-700 mt-2">
+              <div 
+                className="bg-emerald-500 h-full transition-all duration-300"
+                style={{ width: blocksCount > 0 ? `${Math.min(100, Math.max(25, blocksCount / 5))}%` : '15%' }}
+              />
+            </div>
+            <p className="text-xs text-gray-400 font-mono mt-1">
+              Render.com ortamında sunucuya TCP bağlantısı ve mineflayer protokolü doğrudan çalışır.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-4 justify-center">
+            <button
+              onClick={() => setServerLoading(false)}
+              className="px-6 py-2.5 bg-[#4a7c34] hover:bg-[#5b9640] border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-xl font-bold shadow-lg"
+            >
+              Dünyaya Devam Et
+            </button>
+            <button
+              onClick={onExit}
+              className="px-6 py-2.5 bg-[#a82020] hover:bg-[#c93030] border-2 border-t-[#f87171] border-l-[#f87171] border-b-[#7f1d1d] border-r-[#7f1d1d] text-xl font-bold shadow-lg"
+            >
+              İptal Et
             </button>
           </div>
         </div>

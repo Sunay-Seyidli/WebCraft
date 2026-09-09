@@ -302,4 +302,143 @@ export function initTextures(mode: TextureMode = 'realistic') {
       ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 3 : 1, isHD ? 3 : 1);
     }
   });
+
+  // 16. Iron Block
+  blockTextures.iron_block = createPixelTexture(size, (ctx, s) => {
+    ctx.fillStyle = '#d8d8d8';
+    ctx.fillRect(0, 0, s, s);
+    ctx.strokeStyle = '#b0b0b0';
+    ctx.lineWidth = isHD ? 2 : 1;
+    ctx.strokeRect(1, 1, s - 2, s - 2);
+    for (let i = 0; i < (isHD ? 150 : 25); i++) {
+      ctx.fillStyle = Math.random() > 0.5 ? '#ffffff' : '#bfbfbf';
+      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 2 : 1, isHD ? 2 : 1);
+    }
+  });
+
+  // 17. Crafting Table
+  const ctTop = createPixelTexture(size, (ctx, s) => {
+    ctx.fillStyle = '#9c6e39';
+    ctx.fillRect(0, 0, s, s);
+    ctx.fillStyle = '#65421d';
+    ctx.fillRect(s * 0.2, s * 0.2, s * 0.6, s * 0.6);
+    ctx.strokeStyle = '#c49a5b';
+    ctx.strokeRect(s * 0.2, s * 0.2, s * 0.6, s * 0.6);
+  });
+  const ctSide = createPixelTexture(size, (ctx, s) => {
+    ctx.fillStyle = '#9c6e39';
+    ctx.fillRect(0, 0, s, s);
+    ctx.fillStyle = '#4a2f13';
+    ctx.fillRect(s * 0.1, s * 0.3, s * 0.8, s * 0.5);
+  });
+  blockTextures.crafting_table = { top: ctTop, side: ctSide, bottom: blockTextures.oak_planks as any };
+
+  // 18. Furnace
+  const furnaceFront = createPixelTexture(size, (ctx, s) => {
+    ctx.fillStyle = '#595959';
+    ctx.fillRect(0, 0, s, s);
+    ctx.fillStyle = '#1c1c1c';
+    ctx.fillRect(s * 0.2, s * 0.4, s * 0.6, s * 0.45);
+    ctx.fillStyle = '#ea580c';
+    ctx.fillRect(s * 0.3, s * 0.6, s * 0.4, s * 0.2);
+  });
+  blockTextures.furnace = { top: blockTextures.stone as any, side: furnaceFront, bottom: blockTextures.stone as any };
+
+  // 19. Wool
+  blockTextures.wool = createPixelTexture(size, (ctx, s) => {
+    ctx.fillStyle = '#e5e7eb';
+    ctx.fillRect(0, 0, s, s);
+    for (let i = 0; i < (isHD ? 250 : 35); i++) {
+      ctx.fillStyle = Math.random() > 0.5 ? '#f3f4f6' : '#d1d5db';
+      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 2 : 1, isHD ? 2 : 1);
+    }
+  });
+
+  // 20. Bookshelf
+  const shelfSide = createPixelTexture(size, (ctx, s) => {
+    ctx.fillStyle = '#bc9355';
+    ctx.fillRect(0, 0, s, s);
+    ctx.fillStyle = '#2b1d0c';
+    ctx.fillRect(s * 0.1, s * 0.15, s * 0.8, s * 0.3);
+    ctx.fillRect(s * 0.1, s * 0.55, s * 0.8, s * 0.3);
+    // Books
+    const colors = ['#dc2626', '#2563eb', '#16a34a', '#ca8a04', '#9333ea'];
+    for (let i = 0; i < 6; i++) {
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.fillRect(s * 0.15 + i * (s * 0.12), s * 0.18, s * 0.1, s * 0.24);
+      ctx.fillRect(s * 0.15 + i * (s * 0.12), s * 0.58, s * 0.1, s * 0.24);
+    }
+  });
+  blockTextures.bookshelf = { top: blockTextures.oak_planks as any, side: shelfSide, bottom: blockTextures.oak_planks as any };
+
+  // 21. TNT
+  const tntSide = createPixelTexture(size, (ctx, s) => {
+    ctx.fillStyle = '#dc2626';
+    ctx.fillRect(0, 0, s, s);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, s * 0.35, s, s * 0.3);
+    ctx.fillStyle = '#000000';
+    ctx.font = `bold ${Math.floor(s * 0.24)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('TNT', s * 0.5, s * 0.5);
+  });
+  blockTextures.tnt = { top: blockTextures.wool as any, side: tntSide, bottom: blockTextures.wool as any };
+
+  // 22. Netherrack
+  blockTextures.netherrack = createPixelTexture(size, (ctx, s) => {
+    ctx.fillStyle = '#6b1d1d';
+    ctx.fillRect(0, 0, s, s);
+    for (let i = 0; i < (isHD ? 300 : 40); i++) {
+      ctx.fillStyle = Math.random() > 0.5 ? '#882222' : '#451010';
+      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 3 : 1, isHD ? 3 : 1);
+    }
+  });
+
+  // 23. Glowstone
+  blockTextures.glowstone = createPixelTexture(size, (ctx, s) => {
+    ctx.fillStyle = '#ca8a04';
+    ctx.fillRect(0, 0, s, s);
+    for (let i = 0; i < (isHD ? 250 : 35); i++) {
+      ctx.fillStyle = Math.random() > 0.6 ? '#fef08a' : Math.random() > 0.3 ? '#facc15' : '#854d0e';
+      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 4 : 2, isHD ? 4 : 2);
+    }
+  });
 }
+
+/**
+ * Maps Minecraft Java Edition block names (from server packets or bot) to our client BlockType
+ */
+export function mapMinecraftBlock(rawName: string): BlockType {
+  if (!rawName) return 'stone';
+  const name = rawName.toLowerCase().replace('minecraft:', '').trim();
+
+  if (name.includes('grass_block') || name === 'grass' || name.includes('podzol') || name.includes('mycelium')) return 'grass';
+  if (name.includes('dirt') || name.includes('mud') || name.includes('farmland') || name.includes('path')) return 'dirt';
+  if (name.includes('cobble') || name.includes('mossy_cobble')) return 'cobblestone';
+  if (name.includes('log') || name.includes('wood') || name.includes('stem')) return 'oak_log';
+  if (name.includes('leaves') || name.includes('vine') || name.includes('bush')) return 'oak_leaves';
+  if (name.includes('plank') || name.includes('slab') || name.includes('stair') || name.includes('fence') || name.includes('door') || name.includes('gate')) return 'oak_planks';
+  if (name.includes('crafting_table')) return 'crafting_table';
+  if (name.includes('furnace') || name.includes('smoker') || name.includes('blast_furnace')) return 'furnace';
+  if (name.includes('bookshelf')) return 'bookshelf';
+  if (name.includes('tnt')) return 'tnt';
+  if (name.includes('netherrack') || name.includes('crimson') || name.includes('warped_nylium')) return 'netherrack';
+  if (name.includes('glowstone') || name.includes('sea_lantern') || name.includes('shroomlight') || name.includes('lantern') || name.includes('torch')) return 'glowstone';
+  if (name.includes('wool') || name.includes('carpet') || name.includes('concrete') || name.includes('terracotta')) return 'wool';
+  if (name.includes('iron_block') || name.includes('iron') || name.includes('anvil')) return 'iron_block';
+  if (name.includes('gold_ore') || name.includes('copper_ore') || name.includes('iron_ore') || name.includes('coal_ore')) return 'gold_ore';
+  if (name.includes('diamond_ore') || name.includes('emerald_ore') || name.includes('lapis_ore')) return 'diamond_ore';
+  if (name.includes('diamond_block') || name.includes('emerald_block')) return 'diamond_ore';
+  if (name.includes('brick')) return 'bricks';
+  if (name.includes('glass')) return 'glass';
+  if (name.includes('water')) return 'water';
+  if (name.includes('lava')) return 'lava';
+  if (name.includes('bedrock') || name.includes('barrier') || name.includes('structure_void')) return 'bedrock';
+  if (name.includes('sand') || name.includes('gravel')) return 'sand';
+  if (name.includes('obsidian') || name.includes('crying_obsidian') || name.includes('respawn_anchor')) return 'obsidian';
+  if (name.includes('stone') || name.includes('deepslate') || name.includes('andesite') || name.includes('diorite') || name.includes('granite') || name.includes('calcite') || name.includes('tuff') || name.includes('basalt')) return 'stone';
+
+  return 'stone';
+}
+

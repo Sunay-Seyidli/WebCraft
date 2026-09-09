@@ -74,7 +74,15 @@ export type BlockType =
   | 'sand'
   | 'diamond_ore'
   | 'gold_ore'
-  | 'obsidian';
+  | 'obsidian'
+  | 'iron_block'
+  | 'crafting_table'
+  | 'furnace'
+  | 'wool'
+  | 'bookshelf'
+  | 'tnt'
+  | 'netherrack'
+  | 'glowstone';
 
 export interface InventoryItem {
   type: BlockType;
