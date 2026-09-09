@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
-import { WorldInfo, ServerInfo, GameSettings, ChatMessage, BlockType, InventoryItem } from '../types';
+import { WorldInfo, ServerInfo, GameSettings, ChatMessage, BlockType, InventoryItem, MinecraftEntityData } from '../types';
 import { soundManager } from '../utils/audio';
 import { blockTextures, initTextures, mapMinecraftBlock } from '../utils/textures';
+import { createEntity3D, updateEntityTick, RenderedEntity } from '../utils/entityRenderer';
 
 interface GameCanvasProps {
   world?: WorldInfo;
@@ -82,25 +83,32 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     server ? `${server.name} (${server.ip}:${server.port}) sunucusuna bağlanılıyor...` : ''
   );
   const [blocksCount, setBlocksCount] = useState(0);
+  const [entitiesCount, setEntitiesCount] = useState(0);
+  const [actionBarText, setActionBarText] = useState<string | null>(null);
+  const [titleText, setTitleText] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([
     { id: 'init-msg-1', sender: 'Sistem', text: 'Minecraft 1.21.4 Web Client Dünyasına Hoş Geldiniz!', time: '12:00', isSystem: true },
     { 
       id: 'init-msg-2', 
       sender: 'Sistem', 
       text: server 
-        ? `Sunucu: ${server.name} (${server.ip}:${server.port}) - Minecraft Java Protokolü Aktif` 
+        ? `Sunucu: ${server.name} (${server.ip}:${server.port}) - Minecraft Java Protokolü ve Chat Aktif` 
         : `Tek Oyunculu Dünya: ${world?.name || 'Yeni Dünya'}`, 
       time: '12:00', 
       isSystem: true 
     }
   ]);
   const [hotbar, setHotbar] = useState<InventoryItem[]>(initialHotbarItems);
+  const [serverInventory, setServerInventory] = useState<InventoryItem[]>([]);
   const [selectedHotbarIndex, setSelectedHotbarIndex] = useState(0);
   const [health, setHealth] = useState(20);
   const [hunger, setHunger] = useState(20);
   const [fps, setFps] = useState(60);
   const [playerPos, setPlayerPos] = useState({ x: '0.0', y: '12.0', z: '0.0' });
   const [targetedBlock, setTargetedBlock] = useState<TargetedBlockData | null>(null);
+
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
 
   // Touch control state
   const touchMoveRef = useRef({ forward: false, back: false, left: false, right: false, jump: false });
@@ -112,6 +120,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   const showTouchControls = settings.touchControls === 'enabled' || (settings.touchControls === 'auto' && isTouchDevice);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const entitiesMapRef = useRef<Map<number, RenderedEntity>>(new Map());
 
   // Synchronized refs to avoid re-initializing Three.js on UI toggles
   const pausedRef = useRef(paused);
@@ -126,14 +136,41 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   useEffect(() => { hotbarRef.current = hotbar; }, [hotbar]);
   useEffect(() => { selectedHotbarIndexRef.current = selectedHotbarIndex; }, [selectedHotbarIndex]);
 
+  // Auto-scroll chat to bottom on new messages
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [messages, chatOpen]);
+
+  // Focus input when chat opens
+  useEffect(() => {
+    if (chatOpen && chatInputRef.current) {
+      setTimeout(() => chatInputRef.current?.focus(), 50);
+    }
+  }, [chatOpen]);
+
   const addChatMessage = useCallback((sender: string, text: string, isSystem = false) => {
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const uniqueId = `msg-${Date.now()}-${++msgSequence}-${Math.random().toString(36).slice(2, 8)}`;
-    setMessages((prev) => [...prev, { id: uniqueId, sender, text, time, isSystem }]);
+    setMessages((prev) => {
+      // Keep last 120 messages
+      const updated = [...prev, { id: uniqueId, sender, text, time, isSystem }];
+      if (updated.length > 120) return updated.slice(updated.length - 120);
+      return updated;
+    });
   }, []);
 
+  // Hotbar slot selection synchronization
+  const handleSelectHotbarSlot = (index: number) => {
+    setSelectedHotbarIndex(index);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'selectSlot', slot: index }));
+    }
+  };
+
   useEffect(() => {
-    // Initialize chosen texture pack (Realistic HD 64x64, Faithful 32x32, or Vanilla 16x16)
+    // Initialize textures
     initTextures(settings.texturePack || 'realistic');
 
     if (!containerRef.current) return;
@@ -141,8 +178,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
     // Three.js Scene Setup
     const scene = new THREE.Scene();
+    sceneRef.current = scene;
     scene.background = new THREE.Color(0x87ceeb); // Sky blue
-    scene.fog = new THREE.FogExp2(0x87ceeb, 0.022);
+    scene.fog = new THREE.FogExp2(0x87ceeb, 0.018);
 
     const camera = new THREE.PerspectiveCamera(settings.fov, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 15, 0);
@@ -153,10 +191,10 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     container.appendChild(renderer.domElement);
 
     // Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
     scene.add(ambientLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfff5e6, 0.9);
+    const sunLight = new THREE.DirectionalLight(0xfff5e6, 0.95);
     sunLight.position.set(50, 100, 50);
     scene.add(sunLight);
 
@@ -216,7 +254,6 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         return new THREE.MeshLambertMaterial({ color: 0x888888 });
       }
       if ('top' in tex) {
-        // [right, left, top, bottom, front, back]
         const sideMat = new THREE.MeshLambertMaterial({ map: tex.side });
         const topMat = new THREE.MeshLambertMaterial({ map: tex.top });
         const botMat = new THREE.MeshLambertMaterial({ map: tex.bottom });
@@ -308,6 +345,12 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         setInventoryOpen((prev) => !prev);
       }
       if (e.code === 'KeyT' && !chatOpenRef.current) {
+        e.preventDefault();
+        setChatOpen(true);
+      }
+      if (e.code === 'Slash' && !chatOpenRef.current) {
+        e.preventDefault();
+        setChatInput('/');
         setChatOpen(true);
       }
       if (e.code === 'Escape') {
@@ -318,7 +361,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       if (e.code.startsWith('Digit')) {
         const num = parseInt(e.code.replace('Digit', ''), 10);
         if (num >= 1 && num <= 9) {
-          setSelectedHotbarIndex(num - 1);
+          handleSelectHotbarSlot(num - 1);
         }
       }
     };
@@ -435,7 +478,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       const activeSlot = selectedHotbarIndexRef.current;
       const currentItem = hotbarRef.current[activeSlot];
 
-      if (!currentItem || currentItem.count <= 0) {
+      if (!currentItem || currentItem.count <= 0 || currentItem.type === 'air') {
         soundManager.playClick();
         return;
       }
@@ -511,7 +554,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         if (target) {
           const found = hotbarRef.current.findIndex((i) => i.type === target.type);
           if (found !== -1) {
-            setSelectedHotbarIndex(found);
+            handleSelectHotbarSlot(found);
             soundManager.playPop();
           }
         }
@@ -523,9 +566,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     const handleWheel = (e: WheelEvent) => {
       if (pausedRef.current || inventoryOpenRef.current || chatOpenRef.current) return;
       if (e.deltaY > 0) {
-        setSelectedHotbarIndex((prev) => (prev + 1) % 9);
+        handleSelectHotbarSlot((selectedHotbarIndexRef.current + 1) % 9);
       } else if (e.deltaY < 0) {
-        setSelectedHotbarIndex((prev) => (prev - 1 + 9) % 9);
+        handleSelectHotbarSlot((selectedHotbarIndexRef.current - 1 + 9) % 9);
       }
     };
 
@@ -537,7 +580,6 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     const handleTouchStart = (e: TouchEvent) => {
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
-        // Right half of screen is for camera rotation
         if (t.clientX > window.innerWidth * 0.35) {
           touchLookRef.current = {
             touchId: t.identifier,
@@ -598,12 +640,13 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         if (typeof event.data === 'string') {
           try {
             const data = JSON.parse(event.data);
+
             if (data.type === 'status') {
               setServerStatusText(data.message || 'Sunucuya bağlanılıyor...');
-              addChatMessage('Sunucu', data.message, true);
+              addChatMessage('Sistem', data.message, true);
             } else if (data.type === 'login') {
-              setServerStatusText(`${data.username} olarak giriş yapıldı. Dünya chunkları alınıyor...`);
-              addChatMessage('Sunucu', data.message || `${data.username} sunucuya giriş yaptı.`, true);
+              setServerStatusText(`${data.username} olarak giriş yapıldı. Dünya yükleniyor...`);
+              addChatMessage('Sistem', data.message || `${data.username} sunucuya giriş yaptı.`, true);
             } else if (data.type === 'spawn') {
               setServerLoading(false);
               setServerStatusText('Dünyaya katıldınız!');
@@ -613,9 +656,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               camera.position.set(data.x, data.y + 1.6, data.z);
               if (typeof data.health === 'number') setHealth(data.health);
               if (typeof data.food === 'number') setHunger(data.food);
-              addChatMessage('Sunucu', `Dünyaya doğdunuz! X:${data.x.toFixed(1)} Y:${data.y.toFixed(1)} Z:${data.z.toFixed(1)}`, true);
+              addChatMessage('Sistem', `Dünyaya doğdunuz! X:${data.x.toFixed(1)} Y:${data.y.toFixed(1)} Z:${data.z.toFixed(1)}`, true);
             } else if (data.type === 'blocks') {
-              // Real blocks streamed from the Minecraft Java server!
+              // Real heightmap blocks streamed from the Minecraft Java server!
               if (Array.isArray(data.blocks)) {
                 for (const b of data.blocks) {
                   const mapped = mapMinecraftBlock(b.type);
@@ -637,10 +680,82 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                 addBlockAt(data.x, data.y, data.z, mapped);
               }
             } else if (data.type === 'chat') {
-              addChatMessage(data.sender || 'Sunucu', data.text || '');
+              addChatMessage(data.sender || 'Sunucu', data.text || '', data.isSystem);
+            } else if (data.type === 'actionBar') {
+              setActionBarText(data.text);
+              setTimeout(() => setActionBarText(null), 3000);
+            } else if (data.type === 'title') {
+              setTitleText(data.text);
+              setTimeout(() => setTitleText(null), 4000);
             } else if (data.type === 'health') {
               if (typeof data.health === 'number') setHealth(data.health);
               if (typeof data.food === 'number') setHunger(data.food);
+            } else if (data.type === 'inventory') {
+              // Synchronize inventory items from server
+              if (Array.isArray(data.hotbar)) {
+                const mappedHotbar: InventoryItem[] = data.hotbar.map((i: any) => ({
+                  type: mapMinecraftBlock(i.type),
+                  count: i.count,
+                  name: i.name || BLOCK_NAMES[mapMinecraftBlock(i.type)] || i.type,
+                }));
+                setHotbar(mappedHotbar);
+              }
+              if (Array.isArray(data.inventory)) {
+                const mappedInv: InventoryItem[] = data.inventory.map((i: any) => ({
+                  type: mapMinecraftBlock(i.type),
+                  count: i.count,
+                  name: i.name || BLOCK_NAMES[mapMinecraftBlock(i.type)] || i.type,
+                }));
+                setServerInventory(mappedInv);
+              }
+              if (typeof data.selectedSlot === 'number') {
+                setSelectedHotbarIndex(data.selectedSlot);
+              }
+            } else if (data.type === 'entitySpawn') {
+              // 3D Mob, NPC, or Player Spawn
+              const ed: MinecraftEntityData = data.entity;
+              if (ed && !entitiesMapRef.current.has(ed.id)) {
+                const e3d = createEntity3D(ed);
+                scene.add(e3d.group);
+                entitiesMapRef.current.set(ed.id, e3d);
+                setEntitiesCount(entitiesMapRef.current.size);
+              }
+            } else if (data.type === 'entityMove') {
+              // Smooth entity movement
+              const ed = data.entity;
+              if (ed) {
+                const existing = entitiesMapRef.current.get(ed.id);
+                if (existing) {
+                  existing.targetPos.set(ed.x, ed.y, ed.z);
+                  existing.targetYaw = ed.yaw;
+                  existing.targetPitch = ed.pitch;
+                }
+              }
+            } else if (data.type === 'entityDespawn') {
+              // Entity despawned / gone
+              const existing = entitiesMapRef.current.get(data.id);
+              if (existing) {
+                scene.remove(existing.group);
+                entitiesMapRef.current.delete(data.id);
+                setEntitiesCount(entitiesMapRef.current.size);
+              }
+            } else if (data.type === 'entitiesSync') {
+              // Batch sync of visible entities
+              if (Array.isArray(data.entities)) {
+                for (const ed of data.entities) {
+                  const existing = entitiesMapRef.current.get(ed.id);
+                  if (existing) {
+                    existing.targetPos.set(ed.x, ed.y, ed.z);
+                    existing.targetYaw = ed.yaw;
+                    existing.targetPitch = ed.pitch;
+                  } else {
+                    const e3d = createEntity3D(ed);
+                    scene.add(e3d.group);
+                    entitiesMapRef.current.set(ed.id, e3d);
+                  }
+                }
+                setEntitiesCount(entitiesMapRef.current.size);
+              }
             } else if (data.type === 'kicked') {
               setServerStatusText(`Sunucudan atıldınız: ${data.reason}`);
               addChatMessage('Sunucu', `Sunucudan atıldınız: ${data.reason}`, true);
@@ -682,6 +797,11 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         setFps(Math.round((frameCount * 1000) / (now - lastTime)));
         frameCount = 0;
         lastTime = now;
+      }
+
+      // Animate 3D Mobs, NPCs, and Players
+      for (const entity of entitiesMapRef.current.values()) {
+        updateEntityTick(entity, 0.016);
       }
 
       // Update breaking particles
@@ -752,7 +872,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         const targetZ = camera.position.z - Math.cos(player.yaw) * Math.cos(player.pitch);
         camera.lookAt(targetX, targetY, targetZ);
 
-        if (frameCount % 6 === 0) {
+        // Sync position every 3 frames (~20Hz Minecraft tick rate)
+        if (frameCount % 3 === 0) {
           setPlayerPos({
             x: player.x.toFixed(1),
             y: player.y.toFixed(1),
@@ -828,13 +949,63 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       renderer.domElement.removeEventListener('touchend', handleTouchEnd);
       renderer.domElement.remove();
       if (wsRef.current) wsRef.current.close();
+      entitiesMapRef.current.clear();
     };
   }, [settings.fov, settings.graphics, settings.texturePack, server, addChatMessage]);
+
+  const handleSendChat = () => {
+    const text = chatInput.trim();
+    if (!text) return;
+
+    soundManager.playClick();
+    addChatMessage('Ben', text);
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'chat', text }));
+    }
+
+    setChatInput('');
+    setChatOpen(false);
+  };
+
+  const handleRequestChunks = () => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'requestChunks' }));
+      addChatMessage('Sistem', 'Çevredeki chunklar sunucudan talep edildi.', true);
+    }
+  };
+
+  const quickCommands = [
+    { label: '/help', cmd: '/help' },
+    { label: '/spawn', cmd: '/spawn' },
+    { label: '/gamemode creative', cmd: '/gamemode creative' },
+    { label: '/gamemode survival', cmd: '/gamemode survival' },
+    { label: '/login', cmd: '/login ' },
+    { label: '/register', cmd: '/register ' },
+  ];
 
   return (
     <div className="relative w-full h-screen overflow-hidden select-none font-['VT323'] touch-none">
       {/* Three.js Canvas */}
       <div ref={containerRef} className="absolute inset-0 cursor-crosshair" />
+
+      {/* Title Message (Center Screen like Minecraft) */}
+      {titleText && (
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30 text-center animate-fade-in">
+          <div className="text-4xl sm:text-6xl font-bold text-yellow-300 drop-shadow-[0_4px_8px_rgba(0,0,0,0.9)] tracking-wider">
+            {titleText}
+          </div>
+        </div>
+      )}
+
+      {/* Action Bar Text (Above Hotbar) */}
+      {actionBarText && (
+        <div className="absolute bottom-28 sm:bottom-32 left-1/2 -translate-x-1/2 pointer-events-none z-30 text-center bg-black/70 px-4 py-1 rounded border border-yellow-500/50">
+          <div className="text-xl sm:text-2xl font-bold text-yellow-200 drop-shadow">
+            {actionBarText}
+          </div>
+        </div>
+      )}
 
       {/* Target Block HUD (Top Center) */}
       {targetedBlock ? (
@@ -874,10 +1045,13 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         </div>
       </div>
 
-      {/* HUD: FPS & Player Pos & Server Banner */}
+      {/* HUD: FPS & Player Pos & Server Banner & Entities count */}
       <div className="absolute top-2 left-2 sm:top-4 sm:left-4 text-white text-base sm:text-xl bg-black/60 p-2 sm:p-2.5 rounded border border-white/10 pointer-events-none z-10 max-w-[50vw]">
         <div className="text-green-400 font-bold">MC 1.21.4 • {settings.texturePack?.toUpperCase() || 'REALISTIC'}</div>
         <div>FPS: {fps} | XYZ: {playerPos.x}/{playerPos.y}/{playerPos.z}</div>
+        <div className="text-emerald-300 text-xs sm:text-sm">
+          🧱 Bloklar: {blocksCount.toLocaleString()} {server && `| 🧟 Canlılar: ${entitiesCount}`}
+        </div>
         {server && (
           <div className="text-yellow-300 text-xs sm:text-sm font-mono truncate">
             🌐 {server.name} ({server.ip})
@@ -885,25 +1059,34 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         )}
       </div>
 
-      {/* Top Right Buttons (Mobile & Desktop Accessible) */}
-      <div className="absolute top-2 right-2 sm:top-4 sm:right-4 flex items-center gap-2 z-30">
+      {/* Top Right Controls (Chunk Refresh, Chat, Inventory, Pause) */}
+      <div className="absolute top-2 right-2 sm:top-4 sm:right-4 flex items-center gap-1.5 sm:gap-2 z-30">
+        {server && (
+          <button
+            onClick={handleRequestChunks}
+            className="p-2 sm:px-3 sm:py-1.5 bg-black/70 hover:bg-black/90 border border-emerald-500 rounded text-emerald-300 text-base sm:text-lg flex items-center gap-1 active:scale-95 shadow-md"
+            title="Chunkları Yenile"
+          >
+            🗺️ <span className="hidden sm:inline">Chunklar</span>
+          </button>
+        )}
         <button
           onClick={() => setChatOpen((prev) => !prev)}
-          className="p-2 sm:px-3 sm:py-1.5 bg-black/70 hover:bg-black/90 border border-gray-500 rounded text-white text-base sm:text-lg flex items-center gap-1 active:scale-95"
-          title="Sohbeti Aç (T)"
+          className={`p-2 sm:px-3 sm:py-1.5 border rounded text-white text-base sm:text-lg flex items-center gap-1 active:scale-95 shadow-md ${chatOpen ? 'bg-yellow-600 border-yellow-400' : 'bg-black/70 hover:bg-black/90 border-gray-500'}`}
+          title="Sohbeti Aç (T veya /)"
         >
-          💬 <span className="hidden sm:inline">Sohbet</span>
+          💬 <span className="hidden sm:inline">Sohbet (T)</span>
         </button>
         <button
           onClick={() => setInventoryOpen((prev) => !prev)}
-          className="p-2 sm:px-3 sm:py-1.5 bg-black/70 hover:bg-black/90 border border-gray-500 rounded text-white text-base sm:text-lg flex items-center gap-1 active:scale-95"
+          className="p-2 sm:px-3 sm:py-1.5 bg-black/70 hover:bg-black/90 border border-gray-500 rounded text-white text-base sm:text-lg flex items-center gap-1 active:scale-95 shadow-md"
           title="Envanteri Aç (E)"
         >
-          🎒 <span className="hidden sm:inline">Envanter</span>
+          🎒 <span className="hidden sm:inline">Envanter (E)</span>
         </button>
         <button
           onClick={() => setPaused((prev) => !prev)}
-          className="p-2 sm:px-3 sm:py-1.5 bg-black/70 hover:bg-black/90 border border-gray-500 rounded text-white text-base sm:text-lg flex items-center gap-1 active:scale-95"
+          className="p-2 sm:px-3 sm:py-1.5 bg-black/70 hover:bg-black/90 border border-gray-500 rounded text-white text-base sm:text-lg flex items-center gap-1 active:scale-95 shadow-md"
           title="Menü (Esc)"
         >
           ⏸️ <span className="hidden sm:inline">Menü</span>
@@ -927,23 +1110,30 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       </div>
 
       {/* Hotbar */}
-      <div className="absolute bottom-2 sm:bottom-4 left-1/2 transform -translate-x-1/2 bg-[#3c3c3c]/90 border-2 sm:border-4 border-[#222] p-0.5 sm:p-1 flex gap-0.5 sm:gap-1 shadow-2xl z-20 max-w-[96vw] overflow-x-auto">
+      <div className="absolute bottom-2 sm:bottom-4 left-1/2 transform -translate-x-1/2 bg-[#3c3c3c]/95 border-2 sm:border-4 border-[#222] p-0.5 sm:p-1 flex gap-0.5 sm:gap-1 shadow-2xl z-20 max-w-[96vw] overflow-x-auto rounded">
         {hotbar.map((item, index) => {
           const isSelected = index === selectedHotbarIndex;
+          const hasItem = item && item.type !== 'air' && item.count > 0;
           return (
             <div
               key={index}
               onClick={() => {
                 soundManager.playClick();
-                setSelectedHotbarIndex(index);
+                handleSelectHotbarSlot(index);
               }}
               className={`relative w-8 h-8 sm:w-12 sm:h-12 bg-[#8b8b8b] border sm:border-2 cursor-pointer flex items-center justify-center flex-shrink-0 transition-all ${
-                isSelected ? 'border-white scale-105 bg-[#a3a3a3]' : 'border-[#373737] hover:border-gray-400'
+                isSelected ? 'border-white scale-105 bg-[#a3a3a3] shadow-lg ring-2 ring-yellow-400/80' : 'border-[#373737] hover:border-gray-400'
               }`}
             >
               <div className="text-[9px] sm:text-xs font-bold text-yellow-300 absolute top-0.5 left-0.5 sm:left-1">{index + 1}</div>
-              <div className="text-[9px] sm:text-xs uppercase font-bold text-center text-white px-0.5 truncate">{item.type.slice(0, 3)}</div>
-              <div className="text-[9px] sm:text-xs font-bold text-white absolute bottom-0.5 right-0.5 sm:right-1 bg-black/70 px-0.5 rounded-sm">{item.count}</div>
+              <div className="text-[9px] sm:text-xs uppercase font-bold text-center text-white px-0.5 truncate">
+                {hasItem ? item.type.slice(0, 3) : ''}
+              </div>
+              {hasItem && (
+                <div className="text-[9px] sm:text-xs font-bold text-white absolute bottom-0.5 right-0.5 sm:right-1 bg-black/70 px-0.5 rounded-sm">
+                  {item.count}
+                </div>
+              )}
             </div>
           );
         })}
@@ -954,7 +1144,6 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         <div className="absolute inset-0 pointer-events-none z-30">
           {/* Virtual D-Pad (Left Bottom) */}
           <div className="absolute bottom-20 left-4 pointer-events-auto flex flex-col items-center">
-            {/* Up / Forward */}
             <button
               onTouchStart={(e) => { e.preventDefault(); touchMoveRef.current.forward = true; }}
               onTouchEnd={(e) => { e.preventDefault(); touchMoveRef.current.forward = false; }}
@@ -965,7 +1154,6 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               ▲
             </button>
             <div className="flex gap-3">
-              {/* Left */}
               <button
                 onTouchStart={(e) => { e.preventDefault(); touchMoveRef.current.left = true; }}
                 onTouchEnd={(e) => { e.preventDefault(); touchMoveRef.current.left = false; }}
@@ -975,11 +1163,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               >
                 ◀
               </button>
-              {/* Center indicator */}
               <div className="w-10 h-14 flex items-center justify-center text-gray-500 font-mono text-xs">
                 +
               </div>
-              {/* Right */}
               <button
                 onTouchStart={(e) => { e.preventDefault(); touchMoveRef.current.right = true; }}
                 onTouchEnd={(e) => { e.preventDefault(); touchMoveRef.current.right = false; }}
@@ -990,7 +1176,6 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                 ▶
               </button>
             </div>
-            {/* Down / Back */}
             <button
               onTouchStart={(e) => { e.preventDefault(); touchMoveRef.current.back = true; }}
               onTouchEnd={(e) => { e.preventDefault(); touchMoveRef.current.back = false; }}
@@ -1004,7 +1189,6 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
           {/* Action Buttons (Right Bottom: Jump, Break, Place) */}
           <div className="absolute bottom-20 right-4 pointer-events-auto flex flex-col items-end gap-3">
-            {/* Place Block */}
             <button
               onTouchStart={(e) => { e.preventDefault(); actionsRef.current?.placeBlock(); }}
               onClick={() => actionsRef.current?.placeBlock()}
@@ -1014,7 +1198,6 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               <span className="text-[10px]">KOY</span>
             </button>
 
-            {/* Break Block */}
             <button
               onTouchStart={(e) => { e.preventDefault(); actionsRef.current?.breakBlock(); }}
               onClick={() => actionsRef.current?.breakBlock()}
@@ -1024,7 +1207,6 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               <span className="text-[10px]">KIR</span>
             </button>
 
-            {/* Jump */}
             <button
               onTouchStart={(e) => { e.preventDefault(); touchMoveRef.current.jump = true; }}
               onTouchEnd={(e) => { e.preventDefault(); touchMoveRef.current.jump = false; }}
@@ -1039,38 +1221,81 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         </div>
       )}
 
-      {/* Chat Overlay */}
-      <div className="absolute bottom-20 sm:bottom-24 left-2 sm:left-4 w-[75vw] sm:w-96 flex flex-col gap-1 z-30 pointer-events-none">
-        <div className="bg-black/60 p-2 sm:p-2.5 max-h-36 sm:max-h-44 overflow-y-auto flex flex-col gap-1 text-white text-base sm:text-xl rounded border border-white/10">
-          {messages.map((m, idx) => (
-            <div key={`${m.id || 'msg'}-${idx}`} className="drop-shadow">
+      {/* FULL CHAT OVERLAY & HISTORY */}
+      <div className={`absolute bottom-20 sm:bottom-24 left-2 sm:left-4 z-40 transition-all ${
+        chatOpen 
+          ? 'w-[95vw] sm:w-[500px] pointer-events-auto' 
+          : 'w-[85vw] sm:w-[420px] pointer-events-none'
+      }`}>
+        {/* Messages List */}
+        <div 
+          ref={chatScrollRef}
+          className={`flex flex-col gap-1 text-white text-base sm:text-xl rounded border transition-all ${
+            chatOpen 
+              ? 'bg-black/90 p-3 max-h-64 sm:max-h-80 overflow-y-auto border-yellow-500/80 shadow-2xl' 
+              : 'bg-black/50 p-2 max-h-40 sm:max-h-48 overflow-y-hidden border-transparent'
+          }`}
+        >
+          {messages.slice(chatOpen ? -80 : -10).map((m) => (
+            <div key={m.id} className="drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] leading-tight break-words">
               <span className="text-gray-400 text-xs sm:text-sm">[{m.time}] </span>
-              <span className={m.isSystem ? 'text-yellow-400 font-bold' : 'text-green-300'}>{m.sender}: </span>
-              <span>{m.text}</span>
+              <span className={m.isSystem ? 'text-yellow-400 font-bold' : 'text-emerald-300 font-bold'}>
+                {m.sender}:{' '}
+              </span>
+              <span className="text-white">{m.text}</span>
             </div>
           ))}
         </div>
+
+        {/* Quick Command Chips & Input Field (When Chat is Open) */}
         {chatOpen && (
-          <div className="pointer-events-auto flex mt-1">
-            <input
-              type="text"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && chatInput.trim()) {
-                  soundManager.playClick();
-                  addChatMessage('Oyuncu', chatInput);
-                  if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                    wsRef.current.send(JSON.stringify({ type: 'chat', text: chatInput }));
+          <div className="flex flex-col gap-1.5 mt-2 bg-black/90 p-2 rounded border border-gray-700 shadow-2xl">
+            {/* Quick Command Chips */}
+            <div className="flex flex-wrap gap-1">
+              {quickCommands.map((qc) => (
+                <button
+                  key={qc.cmd}
+                  onClick={() => {
+                    setChatInput(qc.cmd);
+                    chatInputRef.current?.focus();
+                  }}
+                  className="px-2 py-0.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded text-xs text-yellow-300 font-mono active:scale-95"
+                >
+                  {qc.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Input Bar */}
+            <div className="flex gap-2">
+              <input
+                ref={chatInputRef}
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleSendChat();
+                  } else if (e.key === 'Escape') {
+                    setChatOpen(false);
                   }
-                  setChatInput('');
-                  setChatOpen(false);
-                }
-              }}
-              placeholder="Mesaj yazın..."
-              autoFocus
-              className="w-full bg-black/90 border-2 border-yellow-400 px-3 py-1.5 sm:py-2 text-lg sm:text-2xl text-white outline-none"
-            />
+                }}
+                placeholder="Mesaj veya komut (/help, /spawn, /login...)..."
+                className="w-full bg-black/95 border-2 border-yellow-400 px-3 py-1.5 sm:py-2 text-lg sm:text-2xl text-white outline-none rounded"
+              />
+              <button
+                onClick={handleSendChat}
+                className="px-4 py-1.5 sm:py-2 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-bold text-lg sm:text-xl rounded border border-emerald-300 flex-shrink-0"
+              >
+                Gönder
+              </button>
+              <button
+                onClick={() => setChatOpen(false)}
+                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-base rounded border border-gray-500"
+              >
+                X
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1078,30 +1303,59 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       {/* Inventory Modal */}
       {inventoryOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#c6c6c6] border-4 border-[#373737] p-4 sm:p-6 w-full max-w-xl flex flex-col gap-4 text-black shadow-2xl">
+          <div className="bg-[#c6c6c6] border-4 border-[#373737] p-4 sm:p-6 w-full max-w-xl flex flex-col gap-4 text-black shadow-2xl rounded">
             <div className="flex justify-between items-center border-b-2 border-gray-500 pb-2">
-              <div className="text-2xl sm:text-3xl font-bold text-black">Envanter (Survival)</div>
+              <div className="text-2xl sm:text-3xl font-bold text-black flex items-center gap-2">
+                <span>🎒 Envanter (Survival & Server Sync)</span>
+              </div>
               <button 
                 onClick={() => setInventoryOpen(false)}
-                className="px-3 py-1 bg-red-600 text-white font-bold text-lg hover:bg-red-500"
+                className="px-3 py-1 bg-red-600 text-white font-bold text-lg hover:bg-red-500 rounded"
               >
                 X
               </button>
             </div>
-            <div className="grid grid-cols-5 sm:grid-cols-9 gap-1.5 sm:gap-2 bg-[#8b8b8b] p-3 sm:p-4 border-2 border-inset border-gray-600 max-h-[60vh] overflow-y-auto">
-              {hotbar.concat(hotbar).map((item, idx) => (
-                <div 
-                  key={idx}
-                  onClick={() => {
-                    soundManager.playPop();
-                    setSelectedHotbarIndex(idx % 9);
-                  }}
-                  className="w-10 h-10 sm:w-12 sm:h-12 bg-[#c6c6c6] border-2 border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] cursor-pointer flex flex-col items-center justify-center text-[10px] sm:text-xs font-bold hover:bg-gray-300"
-                >
-                  <span className="truncate w-full text-center px-0.5">{item.type}</span>
-                  <span className="text-blue-900">{item.count}</span>
-                </div>
-              ))}
+
+            {/* Hotbar Section */}
+            <div>
+              <div className="text-sm font-bold text-gray-700 mb-1">Hızlı Erişim (Hotbar 1-9)</div>
+              <div className="grid grid-cols-9 gap-1.5 bg-[#8b8b8b] p-2.5 border-2 border-inset border-gray-600 rounded">
+                {hotbar.map((item, idx) => (
+                  <div 
+                    key={`hb-${idx}`}
+                    onClick={() => {
+                      soundManager.playPop();
+                      handleSelectHotbarSlot(idx);
+                    }}
+                    className={`w-10 h-10 sm:w-12 sm:h-12 bg-[#c6c6c6] border-2 cursor-pointer flex flex-col items-center justify-center text-[10px] sm:text-xs font-bold transition-transform ${
+                      idx === selectedHotbarIndex ? 'border-yellow-500 bg-yellow-100 scale-105 shadow' : 'border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] hover:bg-gray-300'
+                    }`}
+                  >
+                    <span className="truncate w-full text-center px-0.5">{item.type !== 'air' ? item.type.slice(0, 4) : ''}</span>
+                    {item.count > 0 && <span className="text-blue-900">{item.count}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Main Inventory Section */}
+            <div>
+              <div className="text-sm font-bold text-gray-700 mb-1">Ana Envanter</div>
+              <div className="grid grid-cols-9 gap-1.5 bg-[#8b8b8b] p-2.5 border-2 border-inset border-gray-600 rounded max-h-[40vh] overflow-y-auto">
+                {(serverInventory.length > 0 ? serverInventory : hotbar.concat(hotbar)).map((item, idx) => (
+                  <div 
+                    key={`inv-${idx}`}
+                    onClick={() => {
+                      soundManager.playPop();
+                      handleSelectHotbarSlot(idx % 9);
+                    }}
+                    className="w-10 h-10 sm:w-12 sm:h-12 bg-[#c6c6c6] border-2 border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] cursor-pointer flex flex-col items-center justify-center text-[10px] sm:text-xs font-bold hover:bg-gray-300"
+                  >
+                    <span className="truncate w-full text-center px-0.5">{item.type !== 'air' ? item.type.slice(0, 4) : ''}</span>
+                    {item.count > 0 && <span className="text-blue-900">{item.count}</span>}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -1110,7 +1364,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       {/* Pause Menu */}
       {paused && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#2e2e2e] border-4 border-[#444] p-6 sm:p-8 w-full max-w-md flex flex-col gap-3 sm:gap-4 shadow-2xl">
+          <div className="bg-[#2e2e2e] border-4 border-[#444] p-6 sm:p-8 w-full max-w-md flex flex-col gap-3 sm:gap-4 shadow-2xl rounded">
             <div className="text-3xl sm:text-4xl text-center text-white font-bold mb-2">Oyun Duraklatıldı</div>
             <button
               onClick={() => {
@@ -1130,6 +1384,16 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               className="py-2.5 sm:py-3 bg-[#727272] hover:bg-[#858585] text-white border-2 border-t-[#b5b5b5] border-l-[#b5b5b5] border-b-[#3d3d3d] border-r-[#3d3d3d] text-xl sm:text-2xl font-bold"
             >
               Envanter (Inventory)
+            </button>
+            <button
+              onClick={() => {
+                soundManager.playClick();
+                handleRequestChunks();
+                setPaused(false);
+              }}
+              className="py-2.5 sm:py-3 bg-[#3b82f6] hover:bg-[#2563eb] text-white border-2 border-t-[#93c5fd] border-l-[#93c5fd] border-b-[#1e40af] border-r-[#1e40af] text-xl sm:text-2xl font-bold"
+            >
+              Chunkları Yenile
             </button>
             <button
               onClick={() => {
@@ -1174,7 +1438,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               />
             </div>
             <p className="text-xs text-gray-400 font-mono mt-1">
-              Render.com ortamında sunucuya TCP bağlantısı ve mineflayer protokolü doğrudan çalışır.
+              Minecraft 1.21.4 Protocol • Dynamic Chunks • Mobs/NPCs • Real Chat
             </p>
           </div>
 

@@ -1,0 +1,6 @@
+{
+  "name": "Minecraft 1.21.4 Web Client",
+  "description": "Browser-based Minecraft 1.21.4 Java Edition client with full server protocol bridge, dynamic chunk streaming, mobs/NPCs/players, block breaking/placing, inventory sync, and rich chat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -8,139 +8,222 @@ import url from "url";
 import mineflayer from "mineflayer";
 import { Vec3 } from "vec3";
 
-// Helper function to scan blocks around a position and stream to web client
-function streamBlocksAround(
-  bot: any,
-  ws: WebSocket,
-  center: { x: number; y: number; z: number },
-  radius: number = 14
-) {
-  if (ws.readyState !== WebSocket.OPEN) return;
-  const blocks: { x: number; y: number; z: number; type: string }[] = [];
-  const cx = Math.floor(center.x);
-  const cy = Math.floor(center.y);
-  const cz = Math.floor(center.z);
-
-  const minY = Math.max(-64, cy - 12);
-  const maxY = Math.min(320, cy + 12);
-
-  const vec = new Vec3(0, 0, 0);
-  const neighborVec = new Vec3(0, 0, 0);
-  const neighborOffsets = [
-    [0, 1, 0],
-    [0, -1, 0],
-    [1, 0, 0],
-    [-1, 0, 0],
-    [0, 0, 1],
-    [0, 0, -1],
-  ];
-
-  for (let x = cx - radius; x <= cx + radius; x++) {
-    for (let z = cz - radius; z <= cz + radius; z++) {
-      for (let y = minY; y <= maxY; y++) {
-        vec.set(x, y, z);
-        const b = bot.blockAt(vec);
-        if (!b || !b.name || b.name === "air" || b.name === "cave_air" || b.name === "void_air") {
-          continue;
-        }
-        // Voxel surface culling: only stream blocks exposed to air or transparent blocks
-        let isExposed = false;
-        for (const [dx, dy, dz] of neighborOffsets) {
-          neighborVec.set(x + dx, y + dy, z + dz);
-          const nb = bot.blockAt(neighborVec);
-          if (
-            !nb ||
-            !nb.name ||
-            nb.name === "air" ||
-            nb.name === "cave_air" ||
-            nb.name === "void_air" ||
-            nb.transparent
-          ) {
-            isExposed = true;
-            break;
-          }
-        }
-        if (isExposed) {
-          blocks.push({ x, y, z, type: b.name });
-        }
-      }
+// Helper function to clean Minecraft text, strip formatting codes (§a, §c, etc.) and parse JSON components
+function cleanMinecraftText(raw: any): string {
+  if (raw == null) return "";
+  if (typeof raw === "string") {
+    return raw.replace(/§[0-9a-fk-or]/gi, "").trim();
+  }
+  if (typeof raw === "number" || typeof raw === "boolean") {
+    return String(raw);
+  }
+  let result = "";
+  if (raw.text) result += raw.text;
+  if (raw.translate) {
+    result += raw.translate;
+  }
+  if (Array.isArray(raw.extra)) {
+    for (const item of raw.extra) {
+      result += cleanMinecraftText(item);
     }
   }
-
-  // Stream in batches of 1000 blocks to prevent WebSocket buffer saturation
-  for (let i = 0; i < blocks.length; i += 1000) {
-    const batch = blocks.slice(i, i + 1000);
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          type: "blocks",
-          blocks: batch,
-          isInitial: i === 0,
-          total: blocks.length,
-        })
-      );
+  if (Array.isArray(raw.with)) {
+    for (const item of raw.with) {
+      result += " " + cleanMinecraftText(item);
     }
   }
+  return result.replace(/§[0-9a-fk-or]/gi, "").trim();
 }
 
-// Helper function to stream a single chunk column (16x16)
-function streamChunkColumn(bot: any, ws: WebSocket, chunkStartX: number, chunkStartZ: number) {
-  if (ws.readyState !== WebSocket.OPEN) return;
+// Serialize Minecraft entity into client payload
+function serializeEntity(entity: any) {
+  if (!entity || !entity.position) return null;
+  return {
+    id: entity.id,
+    name: entity.name || entity.mobType || entity.type || "entity",
+    type: entity.type || "mob",
+    username: entity.username || undefined,
+    customName: entity.customName ? cleanMinecraftText(entity.customName) : undefined,
+    x: entity.position.x,
+    y: entity.position.y,
+    z: entity.position.z,
+    yaw: entity.yaw || 0,
+    pitch: entity.pitch || 0,
+    width: entity.width || 0.6,
+    height: entity.height || 1.8,
+    health: entity.health,
+  };
+}
+
+// Helper to extract inventory and hotbar slots
+function getInventoryPayload(bot: any) {
+  if (!bot || !bot.inventory || !bot.inventory.slots) return null;
+  const hotbar: { slot: number; type: string; name: string; count: number }[] = [];
+  // Slots 36 to 44 correspond to hotbar indices 0 to 8
+  for (let i = 0; i < 9; i++) {
+    const item = bot.inventory.slots[36 + i];
+    if (item && item.name && item.count > 0) {
+      hotbar.push({
+        slot: i,
+        type: item.name,
+        name: item.displayName || item.name,
+        count: item.count,
+      });
+    } else {
+      hotbar.push({
+        slot: i,
+        type: "air",
+        name: "Boş",
+        count: 0,
+      });
+    }
+  }
+
+  const inventory: { slot: number; type: string; name: string; count: number }[] = [];
+  // Slots 9 to 35 correspond to the 3x9 main inventory
+  for (let i = 9; i < 36; i++) {
+    const item = bot.inventory.slots[i];
+    if (item && item.name && item.count > 0) {
+      inventory.push({
+        slot: i,
+        type: item.name,
+        name: item.displayName || item.name,
+        count: item.count,
+      });
+    } else {
+      inventory.push({
+        slot: i,
+        type: "air",
+        name: "Boş",
+        count: 0,
+      });
+    }
+  }
+
+  return {
+    type: "inventory",
+    hotbar,
+    inventory,
+    selectedSlot: bot.quickBarSlot ?? 0,
+  };
+}
+
+// Fast heightmap & surface block extractor for a 16x16 chunk column
+function extractChunkColumnBlocks(bot: any, chunkStartX: number, chunkStartZ: number) {
   const blocks: { x: number; y: number; z: number; type: string }[] = [];
   const playerY = bot.entity ? Math.floor(bot.entity.position.y) : 64;
-  const minY = Math.max(-64, playerY - 12);
-  const maxY = Math.min(320, playerY + 12);
-
   const vec = new Vec3(0, 0, 0);
-  const neighborVec = new Vec3(0, 0, 0);
-  const neighborOffsets = [
-    [0, 1, 0],
-    [0, -1, 0],
-    [1, 0, 0],
-    [-1, 0, 0],
-    [0, 0, 1],
-    [0, 0, -1],
-  ];
+
+  // Scan range: y=140 down to y=-24
+  const startY = Math.min(220, Math.max(80, playerY + 32));
+  const bottomY = Math.max(-32, playerY - 48);
 
   for (let x = chunkStartX; x < chunkStartX + 16; x++) {
     for (let z = chunkStartZ; z < chunkStartZ + 16; z++) {
-      for (let y = minY; y <= maxY; y++) {
+      // Coarse search: step by 4 blocks down to find top non-air block rapidly
+      let hitY = -999;
+      for (let y = startY; y >= bottomY; y -= 4) {
         vec.set(x, y, z);
         const b = bot.blockAt(vec);
-        if (!b || !b.name || b.name === "air" || b.name === "cave_air" || b.name === "void_air") {
-          continue;
+        if (b && b.name && b.name !== "air" && b.name !== "cave_air" && b.name !== "void_air") {
+          hitY = y;
+          break;
         }
-        let isExposed = false;
-        for (const [dx, dy, dz] of neighborOffsets) {
-          neighborVec.set(x + dx, y + dy, z + dz);
-          const nb = bot.blockAt(neighborVec);
-          if (
-            !nb ||
-            !nb.name ||
-            nb.name === "air" ||
-            nb.name === "cave_air" ||
-            nb.name === "void_air" ||
-            nb.transparent
-          ) {
-            isExposed = true;
+      }
+
+      if (hitY !== -999) {
+        // Refine search: step up to 3 blocks to locate the exact top surface block
+        let topY = hitY;
+        for (let y = Math.min(startY, hitY + 3); y >= hitY; y--) {
+          vec.set(x, y, z);
+          const b = bot.blockAt(vec);
+          if (b && b.name && b.name !== "air" && b.name !== "cave_air" && b.name !== "void_air") {
+            topY = y;
             break;
           }
         }
-        if (isExposed) {
-          blocks.push({ x, y, z, type: b.name });
+
+        // Collect surface block and up to 2 filler blocks below it (accurate heightmap & slope representation)
+        for (let y = topY; y >= Math.max(bottomY, topY - 2); y--) {
+          vec.set(x, y, z);
+          const b = bot.blockAt(vec);
+          if (b && b.name && b.name !== "air" && b.name !== "cave_air" && b.name !== "void_air") {
+            blocks.push({ x, y, z, type: b.name });
+          }
+        }
+
+        // Check for any structures or tree canopy above topY (up to 12 blocks above)
+        for (let y = topY + 1; y <= Math.min(topY + 12, startY); y++) {
+          vec.set(x, y, z);
+          const b = bot.blockAt(vec);
+          if (b && b.name && b.name !== "air" && b.name !== "cave_air" && b.name !== "void_air") {
+            blocks.push({ x, y, z, type: b.name });
+          }
         }
       }
     }
   }
 
-  if (blocks.length > 0 && ws.readyState === WebSocket.OPEN) {
+  return blocks;
+}
+
+// Stream a single chunk column to the web client
+function streamChunkColumn(
+  bot: any,
+  ws: WebSocket,
+  chunkStartX: number,
+  chunkStartZ: number,
+  isInitial = false
+) {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const blocks = extractChunkColumnBlocks(bot, chunkStartX, chunkStartZ);
+  if (blocks.length > 0) {
     ws.send(
       JSON.stringify({
         type: "blocks",
+        chunkX: Math.floor(chunkStartX / 16),
+        chunkZ: Math.floor(chunkStartZ / 16),
         blocks,
-        isInitial: false,
+        isInitial,
       })
     );
+  }
+}
+
+// Helper function to stream all chunks in a radius around the player
+function streamChunksAround(
+  bot: any,
+  ws: WebSocket,
+  playerChunkX: number,
+  playerChunkZ: number,
+  chunkRadius = 2,
+  sentChunks?: Set<string>
+) {
+  if (ws.readyState !== WebSocket.OPEN || !bot) return;
+
+  for (let dx = -chunkRadius; dx <= chunkRadius; dx++) {
+    for (let dz = -chunkRadius; dz <= chunkRadius; dz++) {
+      const cx = playerChunkX + dx;
+      const cz = playerChunkZ + dz;
+      const key = `${cx},${cz}`;
+      if (sentChunks && sentChunks.has(key)) continue;
+
+      const chunkStartX = cx * 16;
+      const chunkStartZ = cz * 16;
+      const blocks = extractChunkColumnBlocks(bot, chunkStartX, chunkStartZ);
+      if (blocks.length > 0) {
+        if (sentChunks) sentChunks.add(key);
+        ws.send(
+          JSON.stringify({
+            type: "blocks",
+            chunkX: cx,
+            chunkZ: cz,
+            blocks,
+            isInitial: false,
+          })
+        );
+      }
+    }
   }
 }
 
@@ -192,7 +275,7 @@ async function startServer() {
             });
           }
         }
-      } catch (err) {
+      } catch {
         // Fallback to direct TCP ping if external API is unreachable
       }
     }
@@ -310,6 +393,39 @@ async function startServer() {
     let isCleanedUp = false;
     let lastPlayerChunkX = 999999;
     let lastPlayerChunkZ = 999999;
+    const sentChunks = new Set<string>();
+
+    // Chat message deduplication cache (500ms sliding window)
+    const recentMessages = new Map<string, number>();
+    const sendChatMessage = (sender: string, text: string, isSystem = false) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const clean = cleanMinecraftText(text);
+      if (!clean) return;
+
+      const cacheKey = `${sender}:${clean}`;
+      const now = Date.now();
+      const lastSent = recentMessages.get(cacheKey);
+      if (lastSent && now - lastSent < 600) {
+        return; // Deduplicate
+      }
+      recentMessages.set(cacheKey, now);
+
+      // Prune old entries
+      if (recentMessages.size > 100) {
+        for (const [k, t] of recentMessages.entries()) {
+          if (now - t > 5000) recentMessages.delete(k);
+        }
+      }
+
+      ws.send(
+        JSON.stringify({
+          type: "chat",
+          sender: sender || "Sunucu",
+          text: clean,
+          isSystem,
+        })
+      );
+    };
 
     const cleanup = () => {
       if (isCleanedUp) return;
@@ -359,6 +475,7 @@ async function startServer() {
             })
           );
         }
+        sendChatMessage("Sistem", `Sunucuya ${bot.username} olarak giriş yapıldı!`, true);
       });
 
       bot.on("spawn", () => {
@@ -383,12 +500,35 @@ async function startServer() {
             })
           );
 
-          // Stream real initial blocks surrounding spawn
+          // Send initial inventory
+          const invPayload = getInventoryPayload(bot);
+          if (invPayload && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(invPayload));
+          }
+
+          // Send existing visible entities
+          if (bot.entities) {
+            const entitiesList: any[] = [];
+            for (const id in bot.entities) {
+              const e = bot.entities[id];
+              if (e && e.id !== bot.entity.id) {
+                const s = serializeEntity(e);
+                if (s) entitiesList.push(s);
+              }
+            }
+            if (entitiesList.length > 0 && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "entitiesSync", entities: entitiesList }));
+            }
+          }
+
+          // Stream real initial chunks surrounding spawn (5x5 chunk grid)
           setTimeout(() => {
             if (bot && bot.entity) {
-              streamBlocksAround(bot, ws, bot.entity.position, 14);
+              const pcx = Math.floor(bot.entity.position.x / 16);
+              const pcz = Math.floor(bot.entity.position.z / 16);
+              streamChunksAround(bot, ws, pcx, pcz, 2, sentChunks);
             }
-          }, 300);
+          }, 200);
         }
       });
 
@@ -404,33 +544,86 @@ async function startServer() {
         }
       });
 
+      // ==========================================
+      // FULL CHAT & MESSAGE SYSTEM
+      // ==========================================
       bot.on("chat", (author: string, text: string) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(
-            JSON.stringify({
-              type: "chat",
-              sender: author,
-              text,
-            })
-          );
+        sendChatMessage(author, text);
+      });
+
+      bot.on("messagestr", (msg: string, pos: string) => {
+        sendChatMessage(pos === "game_info" ? "Eylem" : "Sunucu", msg, pos === "system");
+      });
+
+      bot.on("message", (jsonMsg: any, pos: string) => {
+        const clean = cleanMinecraftText(jsonMsg);
+        if (clean) {
+          sendChatMessage(pos === "game_info" ? "Eylem" : "Sunucu", clean, pos === "system");
         }
       });
 
-      bot.on("message", (jsonMsg: any) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          const text = jsonMsg.toString ? jsonMsg.toString() : String(jsonMsg);
-          if (text.trim()) {
-            ws.send(
-              JSON.stringify({
-                type: "chat",
-                sender: "Sunucu",
-                text,
-              })
-            );
+      bot.on("actionBar", (msg: any) => {
+        const clean = cleanMinecraftText(msg);
+        if (clean && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "actionBar", text: clean }));
+        }
+      });
+
+      bot.on("title", (text: any) => {
+        const clean = cleanMinecraftText(text);
+        if (clean && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "title", text: clean }));
+        }
+      });
+
+      bot.on("playerJoined", (player: any) => {
+        if (player && player.username) {
+          sendChatMessage("Sistem", `${player.username} oyuna katıldı`, true);
+        }
+      });
+
+      bot.on("playerLeft", (player: any) => {
+        if (player && player.username) {
+          sendChatMessage("Sistem", `${player.username} oyundan ayrıldı`, true);
+        }
+      });
+
+      bot.on("death", () => {
+        sendChatMessage("Sistem", "Öldünüz!", true);
+      });
+
+      // Raw Protocol Chat Packets (Catches 1.19+ Paper / Spigot / Velocity packets)
+      if (bot._client) {
+        const rawChatHandler = (data: any, metaName: string) => {
+          let text = "";
+          let sender = "Sunucu";
+          if (data.formattedMessage) text = cleanMinecraftText(data.formattedMessage);
+          else if (data.plainMessage) text = cleanMinecraftText(data.plainMessage);
+          else if (data.message) text = cleanMinecraftText(data.message);
+          else if (data.content) text = cleanMinecraftText(data.content);
+          else if (data.unsignedContent) text = cleanMinecraftText(data.unsignedContent);
+
+          if (data.senderName) {
+            sender = cleanMinecraftText(data.senderName) || sender;
           }
-        }
-      });
 
+          if (text) {
+            sendChatMessage(sender, text, metaName.includes("system"));
+          }
+        };
+
+        bot._client.on("system_chat", (d: any) => rawChatHandler(d, "system_chat"));
+        bot._client.on("player_chat", (d: any) => rawChatHandler(d, "player_chat"));
+        bot._client.on("disguised_chat", (d: any) => rawChatHandler(d, "disguised_chat"));
+        bot._client.on("profileless_chat", (d: any) => rawChatHandler(d, "profileless_chat"));
+        bot._client.on("chat", (d: any) => rawChatHandler(d, "chat"));
+        bot._client.on("systemChat", (d: any) => rawChatHandler(d, "systemChat"));
+        bot._client.on("playerChat", (d: any) => rawChatHandler(d, "playerChat"));
+      }
+
+      // ==========================================
+      // DYNAMIC CHUNKS & BLOCKS
+      // ==========================================
       bot.on("blockUpdate", (oldBlock: any, newBlock: any) => {
         if (ws.readyState === WebSocket.OPEN && newBlock && newBlock.position) {
           ws.send(
@@ -447,19 +640,105 @@ async function startServer() {
 
       bot.on("chunkColumnLoad", (point: any) => {
         if (bot && bot.entity && ws.readyState === WebSocket.OPEN) {
-          const dx = Math.abs(point.x - bot.entity.position.x);
-          const dz = Math.abs(point.z - bot.entity.position.z);
-          if (dx <= 40 && dz <= 40) {
+          const chunkX = Math.floor(point.x / 16);
+          const chunkZ = Math.floor(point.z / 16);
+          const key = `${chunkX},${chunkZ}`;
+
+          const curChunkX = Math.floor(bot.entity.position.x / 16);
+          const curChunkZ = Math.floor(bot.entity.position.z / 16);
+
+          // Only stream if within 3 chunks of player
+          if (
+            Math.abs(chunkX - curChunkX) <= 3 &&
+            Math.abs(chunkZ - curChunkZ) <= 3 &&
+            !sentChunks.has(key)
+          ) {
+            sentChunks.add(key);
             streamChunkColumn(bot, ws, point.x, point.z);
           }
         }
       });
 
+      // ==========================================
+      // MOBS, NPCS & PLAYERS (ENTITIES)
+      // ==========================================
+      bot.on("entitySpawn", (entity: any) => {
+        if (!entity || !bot.entity || entity.id === bot.entity.id) return;
+        if (ws.readyState === WebSocket.OPEN) {
+          const s = serializeEntity(entity);
+          if (s) {
+            ws.send(JSON.stringify({ type: "entitySpawn", entity: s }));
+          }
+        }
+      });
+
+      bot.on("entityMoved", (entity: any) => {
+        if (!entity || !bot.entity || entity.id === bot.entity.id) return;
+        if (ws.readyState === WebSocket.OPEN && entity.position) {
+          ws.send(
+            JSON.stringify({
+              type: "entityMove",
+              entity: {
+                id: entity.id,
+                x: entity.position.x,
+                y: entity.position.y,
+                z: entity.position.z,
+                yaw: entity.yaw || 0,
+                pitch: entity.pitch || 0,
+              },
+            })
+          );
+        }
+      });
+
+      bot.on("entityGone", (entity: any) => {
+        if (!entity) return;
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "entityDespawn", id: entity.id }));
+        }
+      });
+
+      // Periodic entity synchronization (every 2.5 seconds)
+      const entitySyncInterval = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN || !bot || !bot.entities || !bot.entity) return;
+        const list: any[] = [];
+        for (const id in bot.entities) {
+          const e = bot.entities[id];
+          if (e && e.id !== bot.entity.id && e.position) {
+            const dist = bot.entity.position.distanceTo(e.position);
+            if (dist <= 64) {
+              const s = serializeEntity(e);
+              if (s) list.push(s);
+            }
+          }
+        }
+        if (list.length > 0) {
+          ws.send(JSON.stringify({ type: "entitiesSync", entities: list }));
+        }
+      }, 2500);
+
+      ws.on("close", () => clearInterval(entitySyncInterval));
+
+      // ==========================================
+      // INVENTORY & SLOTS
+      // ==========================================
+      const handleInventoryChange = () => {
+        if (ws.readyState === WebSocket.OPEN) {
+          const payload = getInventoryPayload(bot);
+          if (payload) ws.send(JSON.stringify(payload));
+        }
+      };
+
+      if (bot.inventory) {
+        bot.inventory.on("updateSlot", handleInventoryChange);
+      }
+      bot.on("setSlot", handleInventoryChange);
+      bot.on("heldItemChanged", handleInventoryChange);
+
       bot.on("kicked", (reason: any) => {
         console.warn(`[MC Bridge] Bot kicked:`, reason);
         if (ws.readyState === WebSocket.OPEN) {
-          const reasonStr =
-            typeof reason === "string" ? reason : JSON.stringify(reason);
+          const reasonStr = cleanMinecraftText(reason) || "Sunucudan atıldınız";
           ws.send(
             JSON.stringify({
               type: "kicked",
@@ -487,23 +766,52 @@ async function startServer() {
           ws.send(
             JSON.stringify({
               type: "closed",
-              reason: typeof reason === "string" ? reason : "Sunucu bağlantısı kapandı",
+              reason: cleanMinecraftText(reason) || "Sunucu bağlantısı kapandı",
             })
           );
         }
       });
 
-      // Browser client packets handling
+      // ==========================================
+      // BROWSER CLIENT PACKETS HANDLING
+      // ==========================================
       ws.on("message", (rawMsg) => {
         if (!bot) return;
         try {
           const msg = JSON.parse(rawMsg.toString());
+
+          // 1. Move & Rotate (CRUCIAL: update bot AND send position packets to server)
           if (msg.type === "move" && bot.entity) {
             bot.entity.position.set(msg.x, msg.y, msg.z);
             bot.entity.yaw = msg.yaw;
             bot.entity.pitch = msg.pitch;
 
-            // Check if player moved to another chunk
+            // Send player movement packet to Minecraft server so server loads chunks and syncs entities!
+            if (bot._client) {
+              const degYaw = ((msg.yaw * 180) / Math.PI) % 360;
+              const degPitch = ((msg.pitch * 180) / Math.PI) % 360;
+              try {
+                bot._client.write("position_look", {
+                  x: msg.x,
+                  y: msg.y,
+                  z: msg.z,
+                  yaw: degYaw,
+                  pitch: degPitch,
+                  onGround: !!msg.onGround,
+                });
+              } catch {
+                try {
+                  bot._client.write("position", {
+                    x: msg.x,
+                    y: msg.y,
+                    z: msg.z,
+                    onGround: !!msg.onGround,
+                  });
+                } catch {}
+              }
+            }
+
+            // Check if player moved into another chunk
             const curChunkX = Math.floor(msg.x / 16);
             const curChunkZ = Math.floor(msg.z / 16);
             if (
@@ -512,25 +820,103 @@ async function startServer() {
             ) {
               lastPlayerChunkX = curChunkX;
               lastPlayerChunkZ = curChunkZ;
-              streamBlocksAround(bot, ws, { x: msg.x, y: msg.y, z: msg.z }, 12);
+              streamChunksAround(bot, ws, curChunkX, curChunkZ, 2, sentChunks);
             }
-          } else if (msg.type === "chat" && msg.text) {
-            bot.chat(msg.text);
-          } else if (msg.type === "dig") {
+          }
+
+          // 2. Chat & Commands
+          else if (msg.type === "chat" && msg.text) {
+            const text = msg.text.trim();
+            if (!text) return;
+            console.log(`[MC Bridge] Client chat: "${text}"`);
+            if (text.startsWith("/")) {
+              // Slash command (/help, /spawn, /login, /register, etc.)
+              try {
+                if (bot.chat) bot.chat(text);
+              } catch {}
+              try {
+                if (bot._client) {
+                  bot._client.write("chat_command", {
+                    command: text.slice(1),
+                  });
+                }
+              } catch {}
+            } else {
+              try {
+                bot.chat(text);
+              } catch (err: any) {
+                console.warn(`[MC Bridge] bot.chat failed, fallback:`, err.message);
+                try {
+                  bot._client.write("chat_message", {
+                    message: text,
+                    timestamp: BigInt(Date.now()),
+                    salt: 0n,
+                    offset: 0,
+                    acknowledged: Buffer.alloc(3),
+                  });
+                } catch {}
+              }
+            }
+          }
+
+          // 3. Dig Block
+          else if (msg.type === "dig") {
             const b = bot.blockAt(new Vec3(msg.x, msg.y, msg.z));
             if (b) {
-              bot.dig(b).catch(() => {});
+              bot.dig(b).catch(() => {
+                // Fallback direct dig packet
+                if (bot._client) {
+                  try {
+                    bot._client.write("block_dig", {
+                      status: 0,
+                      location: { x: msg.x, y: msg.y, z: msg.z },
+                      direction: 1,
+                      sequence: 0,
+                    });
+                    bot._client.write("block_dig", {
+                      status: 2,
+                      location: { x: msg.x, y: msg.y, z: msg.z },
+                      direction: 1,
+                      sequence: 0,
+                    });
+                  } catch {}
+                }
+              });
             }
-          } else if (msg.type === "place") {
+            try {
+              bot.swingArm("right");
+            } catch {}
+          }
+
+          // 4. Place Block
+          else if (msg.type === "place") {
             const ref = bot.blockAt(new Vec3(msg.x, msg.y, msg.z));
             if (ref) {
               const face = msg.face || { x: 0, y: 1, z: 0 };
-              bot
-                .placeBlock(ref, new Vec3(face.x, face.y, face.z))
-                .catch(() => {});
+              const faceVec = new Vec3(face.x, face.y, face.z);
+              bot.placeBlock(ref, faceVec).catch(() => {
+                bot.activateBlock(ref, faceVec).catch(() => {});
+              });
             }
-          } else if (msg.type === "requestChunks" && bot.entity) {
-            streamBlocksAround(bot, ws, bot.entity.position, 14);
+            try {
+              bot.swingArm("right");
+            } catch {}
+          }
+
+          // 5. Select Hotbar Slot
+          else if (msg.type === "selectSlot" && typeof msg.slot === "number") {
+            if (msg.slot >= 0 && msg.slot <= 8) {
+              try {
+                bot.setQuickBarSlot(msg.slot);
+              } catch {}
+            }
+          }
+
+          // 6. Request chunks manually
+          else if (msg.type === "requestChunks" && bot.entity) {
+            const curChunkX = Math.floor(bot.entity.position.x / 16);
+            const curChunkZ = Math.floor(bot.entity.position.z / 16);
+            streamChunksAround(bot, ws, curChunkX, curChunkZ, 2, sentChunks);
           }
         } catch {
           // ignore invalid JSON

@@ -55,6 +55,23 @@ export interface ChatMessage {
   text: string;
   time: string;
   isSystem?: boolean;
+  color?: string;
+}
+
+export interface MinecraftEntityData {
+  id: number;
+  type: string;
+  name: string;
+  username?: string;
+  customName?: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  width?: number;
+  height?: number;
+  health?: number;
 }
 
 export type BlockType = 
