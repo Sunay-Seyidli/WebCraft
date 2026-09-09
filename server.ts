@@ -8,42 +8,122 @@ import url from "url";
 import mineflayer from "mineflayer";
 import { Vec3 } from "vec3";
 
-// Helper function to clean Minecraft text, strip formatting codes (§a, §c, etc.) and parse JSON components
+// Helper function to clean Minecraft text, strip formatting codes (§a, §c, etc.) and parse JSON components safely
 function cleanMinecraftText(raw: any): string {
   if (raw == null) return "";
-  if (typeof raw === "string") {
-    return raw.replace(/§[0-9a-fk-or]/gi, "").trim();
-  }
-  if (typeof raw === "number" || typeof raw === "boolean") {
-    return String(raw);
-  }
-  let result = "";
-  if (raw.text) result += raw.text;
-  if (raw.translate) {
-    result += raw.translate;
-  }
-  if (Array.isArray(raw.extra)) {
-    for (const item of raw.extra) {
-      result += cleanMinecraftText(item);
+  try {
+    if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      // Handle potential JSON string format from modern servers
+      if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          return cleanMinecraftText(parsed);
+        } catch {
+          // not JSON, continue
+        }
+      }
+      return trimmed.replace(/§[0-9a-fk-or]/gi, "").trim();
     }
-  }
-  if (Array.isArray(raw.with)) {
-    for (const item of raw.with) {
-      result += " " + cleanMinecraftText(item);
+    if (typeof raw === "number" || typeof raw === "boolean") {
+      return String(raw);
     }
+    // Mineflayer ChatMessage instance support
+    if (typeof raw.toString === "function" && raw.toString !== Object.prototype.toString) {
+      const str = raw.toString();
+      if (str && typeof str === "string" && !str.startsWith("[object ")) {
+        return str.replace(/§[0-9a-fk-or]/gi, "").trim();
+      }
+    }
+    let result = "";
+    if (raw.text) result += raw.text;
+    if (raw.translate) {
+      result += raw.translate;
+    }
+    if (Array.isArray(raw.extra)) {
+      for (const item of raw.extra) {
+        result += cleanMinecraftText(item);
+      }
+    }
+    if (Array.isArray(raw.with)) {
+      for (const item of raw.with) {
+        result += " " + cleanMinecraftText(item);
+      }
+    }
+    if (raw.value != null) {
+      result += cleanMinecraftText(raw.value);
+    }
+    if (raw.content != null) {
+      result += cleanMinecraftText(raw.content);
+    }
+    if (raw.body && raw.body.content != null) {
+      result += cleanMinecraftText(raw.body.content);
+    }
+    return result.replace(/§[0-9a-fk-or]/gi, "").trim();
+  } catch {
+    return "";
   }
-  return result.replace(/§[0-9a-fk-or]/gi, "").trim();
 }
 
-// Serialize Minecraft entity into client payload
+// Extract hologram text or display name from entity metadata (DecentHolograms, HolographicDisplays, text_display)
+function extractEntityCustomName(entity: any): string {
+  if (!entity) return "";
+  try {
+    if (entity.customName) {
+      const c = cleanMinecraftText(entity.customName);
+      if (c && c.length > 0) return c;
+    }
+    if (entity.displayName) {
+      const c = cleanMinecraftText(entity.displayName);
+      if (c && c.length > 0 && c !== entity.name) return c;
+    }
+    // Scan metadata array for text display or armor stand name
+    if (Array.isArray(entity.metadata)) {
+      for (const entry of entity.metadata) {
+        if (entry == null) continue;
+        if (typeof entry === "string" || typeof entry === "object") {
+          const c = cleanMinecraftText(entry);
+          if (c && c.length > 0 && c !== entity.name && !c.startsWith("[object") && c.length < 250) {
+            return c;
+          }
+        }
+      }
+    } else if (entity.metadata && typeof entity.metadata === "object") {
+      for (const key of Object.keys(entity.metadata)) {
+        const val = entity.metadata[key];
+        if (val == null) continue;
+        if (typeof val === "string" || typeof val === "object") {
+          const c = cleanMinecraftText(val);
+          if (c && c.length > 0 && c !== entity.name && !c.startsWith("[object") && c.length < 250) {
+            return c;
+          }
+        }
+      }
+    }
+  } catch {}
+  return "";
+}
+
+// Serialize Minecraft entity into client payload with Hologram detection
 function serializeEntity(entity: any) {
   if (!entity || !entity.position) return null;
+  const rawName = (entity.name || entity.mobType || entity.type || "entity").toLowerCase();
+  const cName = extractEntityCustomName(entity);
+  
+  const isHologram = 
+    rawName === "text_display" || 
+    rawName === "interaction" || 
+    rawName === "area_effect_cloud" || 
+    rawName === "marker" ||
+    (rawName === "armor_stand" && !!cName);
+
   return {
     id: entity.id,
-    name: entity.name || entity.mobType || entity.type || "entity",
+    name: isHologram && cName ? cName : (entity.name || entity.mobType || entity.type || "entity"),
     type: entity.type || "mob",
     username: entity.username || undefined,
-    customName: entity.customName ? cleanMinecraftText(entity.customName) : undefined,
+    customName: cName || undefined,
+    isHologram,
     x: entity.position.x,
     y: entity.position.y,
     z: entity.position.z,
@@ -589,23 +669,28 @@ async function startServer() {
         sendChatMessage("Sistem", "Öldünüz!", true);
       });
 
-      // Raw Protocol Chat Packets (Catches 1.19+ Paper / Spigot / Velocity packets)
+      // Raw Protocol Chat Packets (Catches 1.19+ Paper / Spigot / Velocity packets safely)
       if (bot._client) {
         const rawChatHandler = (data: any, metaName: string) => {
-          let text = "";
-          let sender = "Sunucu";
-          if (data.formattedMessage) text = cleanMinecraftText(data.formattedMessage);
-          else if (data.plainMessage) text = cleanMinecraftText(data.plainMessage);
-          else if (data.message) text = cleanMinecraftText(data.message);
-          else if (data.content) text = cleanMinecraftText(data.content);
-          else if (data.unsignedContent) text = cleanMinecraftText(data.unsignedContent);
+          try {
+            let text = "";
+            let sender = "Sunucu";
+            if (data.formattedMessage) text = cleanMinecraftText(data.formattedMessage);
+            else if (data.plainMessage) text = cleanMinecraftText(data.plainMessage);
+            else if (data.message) text = cleanMinecraftText(data.message);
+            else if (data.content) text = cleanMinecraftText(data.content);
+            else if (data.unsignedContent) text = cleanMinecraftText(data.unsignedContent);
+            else if (data.body && data.body.content) text = cleanMinecraftText(data.body.content);
 
-          if (data.senderName) {
-            sender = cleanMinecraftText(data.senderName) || sender;
-          }
+            if (data.senderName) {
+              sender = cleanMinecraftText(data.senderName) || sender;
+            }
 
-          if (text) {
-            sendChatMessage(sender, text, metaName.includes("system"));
+            if (text && text.trim().length > 0) {
+              sendChatMessage(sender, text, metaName.includes("system"));
+            }
+          } catch (err: any) {
+            console.warn(`[MC Bridge] Chat packet parse warning:`, err?.message);
           }
         };
 
@@ -825,25 +910,29 @@ async function startServer() {
           else if (msg.type === "chat" && msg.text) {
             const text = msg.text.trim();
             if (!text) return;
-            console.log(`[MC Bridge] Client chat: "${text}"`);
-            if (text.startsWith("/")) {
-              // Slash command (/help, /spawn, /login, /register, etc.)
-              try {
-                if (bot.chat) bot.chat(text);
-              } catch {}
-              try {
-                if (bot._client) {
-                  bot._client.write("chat_command", {
-                    command: text.slice(1),
-                  });
-                }
-              } catch {}
-            } else {
-              try {
+            console.log(`[MC Bridge] Client sending chat/command: "${text}"`);
+            try {
+              if (typeof bot.chat === "function") {
                 bot.chat(text);
-              } catch (err: any) {
-                console.warn(`[MC Bridge] bot.chat failed, fallback:`, err.message);
-                try {
+              }
+            } catch (err: any) {
+              console.warn(`[MC Bridge] bot.chat warning:`, err?.message);
+              // Fallback only if bot.chat threw and bot._client exists
+              try {
+                if (text.startsWith("/")) {
+                  if (bot._client && typeof bot._client.write === "function") {
+                    bot._client.write("chat_command", {
+                      command: text.slice(1),
+                      timestamp: BigInt(Date.now()),
+                      salt: 0n,
+                      argumentSignatures: [],
+                      signedPreview: false,
+                      messageCount: 0,
+                      acknowledged: Buffer.alloc(3),
+                      previousMessages: [],
+                    });
+                  }
+                } else if (bot._client && typeof bot._client.write === "function") {
                   bot._client.write("chat_message", {
                     message: text,
                     timestamp: BigInt(Date.now()),
@@ -851,7 +940,9 @@ async function startServer() {
                     offset: 0,
                     acknowledged: Buffer.alloc(3),
                   });
-                } catch {}
+                }
+              } catch (fallbackErr: any) {
+                console.warn(`[MC Bridge] Chat fallback warning:`, fallbackErr?.message);
               }
             }
           }

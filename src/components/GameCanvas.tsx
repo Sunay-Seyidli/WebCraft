@@ -126,6 +126,35 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth < 1024);
   const showTouchControls = settings.touchControls === 'enabled' || (settings.touchControls === 'auto' && isTouchDevice);
 
+  // Landscape vs Portrait detection for mobile optimization
+  const [isPortrait, setIsPortrait] = useState(() => typeof window !== 'undefined' && window.innerHeight > window.innerWidth);
+  const [dismissPortraitWarning, setDismissPortraitWarning] = useState(false);
+
+  useEffect(() => {
+    const checkOrientation = () => {
+      if (typeof window !== 'undefined') {
+        setIsPortrait(window.innerHeight > window.innerWidth);
+      }
+    };
+    window.addEventListener('resize', checkOrientation);
+    window.addEventListener('orientationchange', checkOrientation);
+    return () => {
+      window.removeEventListener('resize', checkOrientation);
+      window.removeEventListener('orientationchange', checkOrientation);
+    };
+  }, []);
+
+  const handleRequestLandscape = async () => {
+    try {
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      }
+      if ('orientation' in screen && (screen.orientation as any).lock) {
+        await (screen.orientation as any).lock('landscape').catch(() => {});
+      }
+    } catch {}
+  };
+
   const wsRef = useRef<WebSocket | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const entitiesMapRef = useRef<Map<number, RenderedEntity>>(new Map());
@@ -1052,19 +1081,39 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     }
   };
 
-  const quickCommands = [
-    { label: '/help', cmd: '/help' },
-    { label: '/spawn', cmd: '/spawn' },
-    { label: '/gamemode creative', cmd: '/gamemode creative' },
-    { label: '/gamemode survival', cmd: '/gamemode survival' },
-    { label: '/login', cmd: '/login ' },
-    { label: '/register', cmd: '/register ' },
-  ];
-
   return (
-    <div className="relative w-full h-screen overflow-hidden select-none font-['VT323'] touch-none">
+    <div className="fixed inset-0 w-full h-full overflow-hidden select-none font-['VT323'] touch-none overscroll-none">
       {/* Three.js Canvas */}
       <div ref={containerRef} className="absolute inset-0 cursor-crosshair" />
+
+      {/* MOBILE PORTRAIT WARNING & ROTATE PROMPT */}
+      {isTouchDevice && isPortrait && !dismissPortraitWarning && (
+        <div className="fixed inset-0 z-50 bg-[#121212]/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center select-none">
+          <div className="w-16 h-16 mb-4 flex items-center justify-center bg-[#252525] border-2 border-yellow-400 rounded-2xl shadow-2xl text-3xl animate-pulse">
+            📱🔄
+          </div>
+          <h2 className="text-3xl font-bold text-yellow-300 mb-2">
+            Lütfen Ekranınızı Yatay Çevirin
+          </h2>
+          <p className="text-gray-300 text-base max-w-sm mb-6 leading-relaxed">
+            Minecraft kontrollerini rahat kullanmak ve ekranın tam sığması için cihazınızı yatay (landscape) konuma getirin.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs">
+            <button
+              onClick={handleRequestLandscape}
+              className="w-full py-3 bg-[#4a7c34] hover:bg-[#5b9640] active:bg-[#3d662b] border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-white text-xl font-bold rounded shadow-lg active:scale-95"
+            >
+              ⛶ Tam Ekran & Yatay Yap
+            </button>
+            <button
+              onClick={() => setDismissPortraitWarning(true)}
+              className="w-full py-2 bg-black/60 hover:bg-black/80 border border-gray-600 text-gray-300 text-base rounded active:scale-95"
+            >
+              Yine de Devam Et
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Title Message (Center Screen like Minecraft) */}
       {titleText && (
@@ -1077,8 +1126,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
       {/* Action Bar Text (Above Hotbar) */}
       {actionBarText && (
-        <div className="absolute bottom-28 sm:bottom-32 left-1/2 -translate-x-1/2 pointer-events-none z-30 text-center bg-black/70 px-4 py-1 rounded border border-yellow-500/50">
-          <div className="text-xl sm:text-2xl font-bold text-yellow-200 drop-shadow">
+        <div className="absolute bottom-24 sm:bottom-28 left-1/2 -translate-x-1/2 pointer-events-none z-30 text-center bg-black/70 px-4 py-1 rounded border border-yellow-500/50">
+          <div className="text-lg sm:text-2xl font-bold text-yellow-200 drop-shadow">
             {actionBarText}
           </div>
         </div>
@@ -1088,32 +1137,18 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       {targetedBlock ? (
         <div 
           id="target-block-hud" 
-          className="absolute top-2 sm:top-4 left-1/2 -translate-x-1/2 bg-black/85 border-2 border-[#555] px-3 sm:px-4 py-1.5 sm:py-2 rounded shadow-2xl flex items-center gap-2 sm:gap-3 pointer-events-none text-white z-20 backdrop-blur-sm max-w-[92vw]"
+          className="absolute top-2 sm:top-3 left-1/2 -translate-x-1/2 bg-black/85 border-2 border-[#555] px-3 sm:px-4 py-1 rounded shadow-2xl flex items-center gap-2 pointer-events-none text-white z-20 backdrop-blur-sm max-w-[90vw]"
         >
-          <div className={`w-3 h-3 rounded-full flex-shrink-0 ${targetedBlock.isBedrock ? 'bg-red-500' : 'bg-emerald-400 animate-pulse'}`} />
-          <div className="flex flex-col overflow-hidden">
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <span className="font-bold text-yellow-300 text-xl sm:text-2xl tracking-wide truncate">{targetedBlock.name}</span>
-              <span className="text-gray-300 text-xs sm:text-sm">({targetedBlock.distance}m)</span>
-              {targetedBlock.isBedrock && (
-                <span className="text-[10px] sm:text-xs bg-red-900/80 text-red-200 px-1 py-0.5 rounded border border-red-700">Kırılamaz</span>
-              )}
-            </div>
-            <div className="text-gray-300 text-xs sm:text-sm flex gap-2 font-mono truncate">
-              <span>[{targetedBlock.x}, {targetedBlock.y}, {targetedBlock.z}]</span>
-              <span className="text-blue-300 hidden sm:inline">[Sol: Kır]</span>
-              <span className="text-emerald-300 hidden sm:inline">[Sağ: Koy]</span>
-            </div>
+          <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${targetedBlock.isBedrock ? 'bg-red-500' : 'bg-emerald-400 animate-pulse'}`} />
+          <div className="flex items-center gap-2 overflow-hidden">
+            <span className="font-bold text-yellow-300 text-lg sm:text-xl tracking-wide truncate">{targetedBlock.name}</span>
+            <span className="text-gray-300 text-xs font-mono">[{targetedBlock.x}, {targetedBlock.y}, {targetedBlock.z}]</span>
+            {targetedBlock.isBedrock && (
+              <span className="text-[10px] bg-red-900/80 text-red-200 px-1 rounded">Kırılamaz</span>
+            )}
           </div>
         </div>
-      ) : (
-        <div 
-          id="target-block-hud-empty" 
-          className="absolute top-2 sm:top-4 left-1/2 -translate-x-1/2 bg-black/40 border border-white/20 px-3 py-1 rounded text-gray-400 text-xs sm:text-base pointer-events-none z-20"
-        >
-          Hedef Blok: Menzil Dışı
-        </div>
-      )}
+      ) : null}
 
       {/* Crosshair */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
@@ -1122,26 +1157,26 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         </div>
       </div>
 
-      {/* HUD: FPS & Player Pos & Server Banner & Entities count */}
-      <div className="absolute top-2 left-2 sm:top-4 sm:left-4 text-white text-base sm:text-xl bg-black/60 p-2 sm:p-2.5 rounded border border-white/10 pointer-events-none z-10 max-w-[50vw]">
-        <div className="text-green-400 font-bold">MC 1.21.4 • {settings.texturePack?.toUpperCase() || 'REALISTIC'}</div>
-        <div>FPS: {fps} | XYZ: {playerPos.x}/{playerPos.y}/{playerPos.z}</div>
-        <div className="text-emerald-300 text-xs sm:text-sm">
-          🧱 Bloklar: {blocksCount.toLocaleString()} {server && `| 🧟 Canlılar: ${entitiesCount}`}
+      {/* HUD: FPS & Player Pos & Server Banner (Top Left) */}
+      <div className="absolute top-2 left-2 text-white text-xs sm:text-sm bg-black/60 px-2.5 py-1.5 rounded border border-white/10 pointer-events-none z-20 max-w-[45vw] overflow-hidden">
+        <div className="text-green-400 font-bold truncate">MC 1.21.4 • {settings.texturePack?.toUpperCase() || 'REALISTIC'}</div>
+        <div className="truncate font-mono">FPS: {fps} | XYZ: {playerPos.x}/{playerPos.y}/{playerPos.z}</div>
+        <div className="text-emerald-300 text-[11px] truncate">
+          🧱 Blok: {blocksCount.toLocaleString()} {server && `| 🧟 Canlı: ${entitiesCount}`}
         </div>
         {server && (
-          <div className="text-yellow-300 text-xs sm:text-sm font-mono truncate">
-            🌐 {server.name} ({server.ip})
+          <div className="text-yellow-300 text-[11px] font-mono truncate">
+            🌐 {server.name}
           </div>
         )}
       </div>
 
-      {/* Top Right Controls (Chunk Refresh, Chat, Inventory, Pause) */}
-      <div className="absolute top-2 right-2 sm:top-4 sm:right-4 flex items-center gap-1.5 sm:gap-2 z-30">
+      {/* Top Right Buttons (Fixed Z-50, Never Covered) */}
+      <div className="absolute top-2 right-2 flex items-center gap-1.5 z-50">
         {server && (
           <button
             onClick={handleRequestChunks}
-            className="p-2 sm:px-3 sm:py-1.5 bg-black/70 hover:bg-black/90 border border-emerald-500 rounded text-emerald-300 text-base sm:text-lg flex items-center gap-1 active:scale-95 shadow-md"
+            className="px-2.5 py-1 bg-black/75 hover:bg-black/95 active:bg-emerald-950 border border-emerald-500 rounded text-emerald-300 text-sm sm:text-base flex items-center gap-1 shadow-md active:scale-95"
             title="Chunkları Yenile"
           >
             🗺️ <span className="hidden sm:inline">Chunklar</span>
@@ -1149,45 +1184,47 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         )}
         <button
           onClick={() => setChatOpen((prev) => !prev)}
-          className={`p-2 sm:px-3 sm:py-1.5 border rounded text-white text-base sm:text-lg flex items-center gap-1 active:scale-95 shadow-md ${chatOpen ? 'bg-yellow-600 border-yellow-400' : 'bg-black/70 hover:bg-black/90 border-gray-500'}`}
-          title="Sohbeti Aç (T veya /)"
+          className={`px-2.5 py-1 border rounded text-white text-sm sm:text-base flex items-center gap-1 shadow-md active:scale-95 ${
+            chatOpen ? 'bg-yellow-600 border-yellow-400' : 'bg-black/75 hover:bg-black/95 border-gray-500'
+          }`}
+          title="Sohbet"
         >
-          💬 <span className="hidden sm:inline">Sohbet (T)</span>
+          💬 <span className="hidden sm:inline">Sohbet</span>
         </button>
         <button
           onClick={() => setInventoryOpen((prev) => !prev)}
-          className="p-2 sm:px-3 sm:py-1.5 bg-black/70 hover:bg-black/90 border border-gray-500 rounded text-white text-base sm:text-lg flex items-center gap-1 active:scale-95 shadow-md"
-          title="Envanteri Aç (E)"
+          className="px-2.5 py-1 bg-black/75 hover:bg-black/95 border border-gray-500 rounded text-white text-sm sm:text-base flex items-center gap-1 shadow-md active:scale-95"
+          title="Envanter"
         >
-          🎒 <span className="hidden sm:inline">Envanter (E)</span>
+          🎒 <span className="hidden sm:inline">Envanter</span>
         </button>
         <button
           onClick={() => setPaused((prev) => !prev)}
-          className="p-2 sm:px-3 sm:py-1.5 bg-black/70 hover:bg-black/90 border border-gray-500 rounded text-white text-base sm:text-lg flex items-center gap-1 active:scale-95 shadow-md"
-          title="Menü (Esc)"
+          className="px-2.5 py-1 bg-black/75 hover:bg-black/95 border border-gray-500 rounded text-white text-sm sm:text-base flex items-center gap-1 shadow-md active:scale-95"
+          title="Menü"
         >
-          ⏸️ <span className="hidden sm:inline">Menü</span>
+          ⏸️
         </button>
       </div>
 
       {/* HUD: Hearts & Hunger */}
-      <div className="absolute bottom-16 sm:bottom-20 left-1/2 transform -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none z-10">
+      <div className="absolute bottom-14 sm:bottom-16 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none z-20">
         {/* Hearts */}
         <div className="flex gap-0.5 sm:gap-1">
           {Array.from({ length: 10 }).map((_, i) => (
-            <div key={i} className={`w-3.5 h-3.5 sm:w-5 sm:h-5 ${i < health / 2 ? 'bg-red-600' : 'bg-gray-600'} border border-black transform rotate-45`} />
+            <div key={i} className={`w-3 h-3 sm:w-4 sm:h-4 ${i < health / 2 ? 'bg-red-600' : 'bg-gray-600'} border border-black transform rotate-45`} />
           ))}
         </div>
         {/* Hunger */}
         <div className="flex gap-0.5 sm:gap-1">
           {Array.from({ length: 10 }).map((_, i) => (
-            <div key={i} className={`w-3.5 h-3.5 sm:w-5 sm:h-5 ${i < hunger / 2 ? 'bg-amber-700' : 'bg-gray-600'} border border-black rounded-full`} />
+            <div key={i} className={`w-3 h-3 sm:w-4 sm:h-4 ${i < hunger / 2 ? 'bg-amber-700' : 'bg-gray-600'} border border-black rounded-full`} />
           ))}
         </div>
       </div>
 
-      {/* Hotbar */}
-      <div className="absolute bottom-2 sm:bottom-4 left-1/2 transform -translate-x-1/2 bg-[#3c3c3c]/95 border-2 sm:border-4 border-[#222] p-0.5 sm:p-1 flex gap-0.5 sm:gap-1 shadow-2xl z-20 max-w-[96vw] overflow-x-auto rounded">
+      {/* Hotbar (Centered at bottom, compact) */}
+      <div className="absolute bottom-1.5 sm:bottom-3 left-1/2 -translate-x-1/2 bg-[#3c3c3c]/95 border-2 border-[#222] p-0.5 flex gap-0.5 shadow-2xl z-30 max-w-[94vw] rounded overflow-x-auto">
         {hotbar.map((item, index) => {
           const isSelected = index === selectedHotbarIndex;
           const hasItem = item && item.type !== 'air' && item.count > 0;
@@ -1198,16 +1235,16 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                 soundManager.playClick();
                 handleSelectHotbarSlot(index);
               }}
-              className={`relative w-8 h-8 sm:w-12 sm:h-12 bg-[#8b8b8b] border sm:border-2 cursor-pointer flex items-center justify-center flex-shrink-0 transition-all ${
+              className={`relative w-8 h-8 sm:w-11 sm:h-11 bg-[#8b8b8b] border cursor-pointer flex items-center justify-center flex-shrink-0 transition-all ${
                 isSelected ? 'border-white scale-105 bg-[#a3a3a3] shadow-lg ring-2 ring-yellow-400/80' : 'border-[#373737] hover:border-gray-400'
               }`}
             >
-              <div className="text-[9px] sm:text-xs font-bold text-yellow-300 absolute top-0.5 left-0.5 sm:left-1">{index + 1}</div>
-              <div className="text-[9px] sm:text-xs uppercase font-bold text-center text-white px-0.5 truncate">
+              <div className="text-[9px] font-bold text-yellow-300 absolute top-0.5 left-0.5">{index + 1}</div>
+              <div className="text-[9px] sm:text-[10px] uppercase font-bold text-center text-white px-0.5 truncate">
                 {hasItem ? item.type.slice(0, 3) : ''}
               </div>
               {hasItem && (
-                <div className="text-[9px] sm:text-xs font-bold text-white absolute bottom-0.5 right-0.5 sm:right-1 bg-black/70 px-0.5 rounded-sm">
+                <div className="text-[9px] font-bold text-white absolute bottom-0.5 right-0.5 bg-black/70 px-0.5 rounded-sm">
                   {item.count}
                 </div>
               )}
@@ -1216,31 +1253,31 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         })}
       </div>
 
-      {/* MOBILE TOUCH CONTROLS OVERLAY */}
+      {/* MOBILE TOUCH CONTROLS (D-Pad & Actions) */}
       {showTouchControls && (
-        <div className="absolute inset-0 pointer-events-none z-30">
+        <div className="absolute inset-0 pointer-events-none z-40">
           {/* Virtual D-Pad (Left Bottom) */}
-          <div className="absolute bottom-20 left-4 pointer-events-auto flex flex-col items-center">
+          <div className="absolute bottom-3 left-3 pointer-events-auto flex flex-col items-center">
             <button
               onTouchStart={(e) => { e.preventDefault(); touchMoveRef.current.forward = true; }}
               onTouchEnd={(e) => { e.preventDefault(); touchMoveRef.current.forward = false; }}
               onMouseDown={() => { touchMoveRef.current.forward = true; }}
               onMouseUp={() => { touchMoveRef.current.forward = false; }}
-              className="w-14 h-14 bg-black/60 active:bg-black/90 border-2 border-white/50 active:border-yellow-400 text-white text-2xl font-bold rounded-t-lg flex items-center justify-center select-none shadow-xl"
+              className="w-12 h-12 bg-black/60 active:bg-black/90 border-2 border-white/50 active:border-yellow-400 text-white text-xl font-bold rounded-t-lg flex items-center justify-center select-none shadow-xl"
             >
               ▲
             </button>
-            <div className="flex gap-3">
+            <div className="flex gap-2">
               <button
                 onTouchStart={(e) => { e.preventDefault(); touchMoveRef.current.left = true; }}
                 onTouchEnd={(e) => { e.preventDefault(); touchMoveRef.current.left = false; }}
                 onMouseDown={() => { touchMoveRef.current.left = true; }}
                 onMouseUp={() => { touchMoveRef.current.left = false; }}
-                className="w-14 h-14 bg-black/60 active:bg-black/90 border-2 border-white/50 active:border-yellow-400 text-white text-2xl font-bold rounded-l-lg flex items-center justify-center select-none shadow-xl"
+                className="w-12 h-12 bg-black/60 active:bg-black/90 border-2 border-white/50 active:border-yellow-400 text-white text-xl font-bold rounded-l-lg flex items-center justify-center select-none shadow-xl"
               >
                 ◀
               </button>
-              <div className="w-10 h-14 flex items-center justify-center text-gray-500 font-mono text-xs">
+              <div className="w-8 h-12 flex items-center justify-center text-gray-400 font-mono text-xs">
                 +
               </div>
               <button
@@ -1248,7 +1285,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                 onTouchEnd={(e) => { e.preventDefault(); touchMoveRef.current.right = false; }}
                 onMouseDown={() => { touchMoveRef.current.right = true; }}
                 onMouseUp={() => { touchMoveRef.current.right = false; }}
-                className="w-14 h-14 bg-black/60 active:bg-black/90 border-2 border-white/50 active:border-yellow-400 text-white text-2xl font-bold rounded-r-lg flex items-center justify-center select-none shadow-xl"
+                className="w-12 h-12 bg-black/60 active:bg-black/90 border-2 border-white/50 active:border-yellow-400 text-white text-xl font-bold rounded-r-lg flex items-center justify-center select-none shadow-xl"
               >
                 ▶
               </button>
@@ -1258,30 +1295,30 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               onTouchEnd={(e) => { e.preventDefault(); touchMoveRef.current.back = false; }}
               onMouseDown={() => { touchMoveRef.current.back = true; }}
               onMouseUp={() => { touchMoveRef.current.back = false; }}
-              className="w-14 h-14 bg-black/60 active:bg-black/90 border-2 border-white/50 active:border-yellow-400 text-white text-2xl font-bold rounded-b-lg flex items-center justify-center select-none shadow-xl"
+              className="w-12 h-12 bg-black/60 active:bg-black/90 border-2 border-white/50 active:border-yellow-400 text-white text-xl font-bold rounded-b-lg flex items-center justify-center select-none shadow-xl"
             >
               ▼
             </button>
           </div>
 
           {/* Action Buttons (Right Bottom: Jump, Break, Place) */}
-          <div className="absolute bottom-20 right-4 pointer-events-auto flex flex-col items-end gap-3">
+          <div className="absolute bottom-3 right-3 pointer-events-auto flex flex-col items-end gap-2">
             <button
               onTouchStart={(e) => { e.preventDefault(); actionsRef.current?.placeBlock(); }}
               onClick={() => actionsRef.current?.placeBlock()}
-              className="w-14 h-14 bg-emerald-700/80 active:bg-emerald-600 border-2 border-emerald-400 text-white text-sm font-bold rounded-full flex flex-col items-center justify-center shadow-xl select-none"
+              className="w-13 h-13 bg-emerald-700/85 active:bg-emerald-500 border-2 border-emerald-400 text-white font-bold rounded-full flex flex-col items-center justify-center shadow-xl select-none"
             >
-              <span>🧱</span>
-              <span className="text-[10px]">KOY</span>
+              <span className="text-base">🧱</span>
+              <span className="text-[9px] leading-none">KOY</span>
             </button>
 
             <button
               onTouchStart={(e) => { e.preventDefault(); actionsRef.current?.breakBlock(); }}
               onClick={() => actionsRef.current?.breakBlock()}
-              className="w-14 h-14 bg-red-700/80 active:bg-red-600 border-2 border-red-400 text-white text-sm font-bold rounded-full flex flex-col items-center justify-center shadow-xl select-none"
+              className="w-13 h-13 bg-red-700/85 active:bg-red-500 border-2 border-red-400 text-white font-bold rounded-full flex flex-col items-center justify-center shadow-xl select-none"
             >
-              <span>⛏️</span>
-              <span className="text-[10px]">KIR</span>
+              <span className="text-base">⛏️</span>
+              <span className="text-[9px] leading-none">KIR</span>
             </button>
 
             <button
@@ -1289,62 +1326,96 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               onTouchEnd={(e) => { e.preventDefault(); touchMoveRef.current.jump = false; }}
               onMouseDown={() => { touchMoveRef.current.jump = true; }}
               onMouseUp={() => { touchMoveRef.current.jump = false; }}
-              className="w-16 h-16 bg-blue-700/80 active:bg-blue-600 border-2 border-blue-400 text-white text-base font-bold rounded-full flex flex-col items-center justify-center shadow-2xl select-none"
+              className="w-14 h-14 bg-blue-700/85 active:bg-blue-500 border-2 border-blue-400 text-white font-bold rounded-full flex flex-col items-center justify-center shadow-2xl select-none"
             >
-              <span>⬆️</span>
-              <span className="text-[11px]">ZIPLA</span>
+              <span className="text-lg">⬆️</span>
+              <span className="text-[10px] leading-none">ZIPLA</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* FULL CHAT OVERLAY & HISTORY */}
-      <div className={`absolute bottom-20 sm:bottom-24 left-2 sm:left-4 z-40 transition-all ${
-        chatOpen 
-          ? 'w-[95vw] sm:w-[500px] pointer-events-auto' 
-          : 'w-[85vw] sm:w-[420px] pointer-events-none'
-      }`}>
-        {/* Messages List */}
-        <div 
-          ref={chatScrollRef}
-          className={`flex flex-col gap-1 text-white text-base sm:text-xl rounded border transition-all ${
-            chatOpen 
-              ? 'bg-black/90 p-3 max-h-64 sm:max-h-80 overflow-y-auto border-yellow-500/80 shadow-2xl' 
-              : 'bg-black/50 p-2 max-h-40 sm:max-h-48 overflow-y-hidden border-transparent'
-          }`}
-        >
-          {messages.slice(chatOpen ? -80 : -10).map((m) => (
-            <div key={m.id} className="drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] leading-tight break-words">
-              <span className="text-gray-400 text-xs sm:text-sm">[{m.time}] </span>
-              <span className={m.isSystem ? 'text-yellow-400 font-bold' : 'text-emerald-300 font-bold'}>
-                {m.sender}:{' '}
-              </span>
-              <span className="text-white">{m.text}</span>
+      {/* MOBILE CHAT MODAL OVERLAY */}
+      {isTouchDevice && chatOpen && (
+        <div className="fixed inset-2 sm:inset-6 z-50 bg-black/95 border-2 border-yellow-400 rounded-lg p-3 flex flex-col shadow-2xl backdrop-blur-md">
+          <div className="flex justify-between items-center border-b border-gray-700 pb-2 mb-2">
+            <div className="text-lg font-bold text-yellow-300 flex items-center gap-2">
+              <span>💬 Sohbet & Komutlar</span>
             </div>
-          ))}
+            <button
+              onClick={() => setChatOpen(false)}
+              className="px-3 py-1 bg-red-600 active:bg-red-700 text-white font-bold rounded text-sm"
+            >
+              ✕ Kapat
+            </button>
+          </div>
+
+          {/* Messages list */}
+          <div ref={chatScrollRef} className="flex-1 overflow-y-auto flex flex-col gap-1 pr-1 text-sm sm:text-base">
+            {messages.slice(-60).map((m) => (
+              <div key={m.id} className="leading-tight break-words">
+                <span className="text-gray-400 text-xs">[{m.time}] </span>
+                <span className={m.isSystem ? 'text-yellow-400 font-bold' : 'text-emerald-300 font-bold'}>
+                  {m.sender}:{' '}
+                </span>
+                <span className="text-white">{m.text}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Input bar */}
+          <div className="flex gap-2 pt-2 border-t border-gray-700 mt-2">
+            <input
+              ref={chatInputRef}
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSendChat();
+              }}
+              placeholder="Mesaj veya /komut yazın..."
+              className="flex-1 bg-gray-900 border border-yellow-400/80 px-3 py-2 text-white outline-none rounded text-base"
+            />
+            <button
+              onClick={handleSendChat}
+              className="px-4 py-2 bg-emerald-600 active:bg-emerald-700 text-white font-bold rounded text-base flex-shrink-0"
+            >
+              Gönder
+            </button>
+          </div>
         </div>
+      )}
 
-        {/* Quick Command Chips & Input Field (When Chat is Open) */}
-        {chatOpen && (
-          <div className="flex flex-col gap-1.5 mt-2 bg-black/90 p-2 rounded border border-gray-700 shadow-2xl">
-            {/* Quick Command Chips */}
-            <div className="flex flex-wrap gap-1">
-              {quickCommands.map((qc) => (
-                <button
-                  key={qc.cmd}
-                  onClick={() => {
-                    setChatInput(qc.cmd);
-                    chatInputRef.current?.focus();
-                  }}
-                  className="px-2 py-0.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded text-xs text-yellow-300 font-mono active:scale-95"
-                >
-                  {qc.label}
-                </button>
-              ))}
-            </div>
+      {/* DESKTOP CHAT SYSTEM (Classic Java Edition) */}
+      {!isTouchDevice && (
+        <div className={`absolute bottom-16 left-4 z-40 transition-all ${
+          chatOpen 
+            ? 'w-[480px] pointer-events-auto' 
+            : 'w-[400px] pointer-events-none'
+        }`}>
+          {/* Messages List */}
+          <div 
+            ref={chatScrollRef}
+            className={`flex flex-col gap-1 text-white text-base rounded border transition-all ${
+              chatOpen 
+                ? 'bg-black/90 p-3 max-h-72 overflow-y-auto border-yellow-500/80 shadow-2xl' 
+                : 'bg-black/50 p-2 max-h-44 overflow-y-hidden border-transparent'
+            }`}
+          >
+            {messages.slice(chatOpen ? -80 : -8).map((m) => (
+              <div key={m.id} className="drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] leading-tight break-words">
+                <span className="text-gray-400 text-xs">[{m.time}] </span>
+                <span className={m.isSystem ? 'text-yellow-400 font-bold' : 'text-emerald-300 font-bold'}>
+                  {m.sender}:{' '}
+                </span>
+                <span className="text-white">{m.text}</span>
+              </div>
+            ))}
+          </div>
 
-            {/* Input Bar */}
-            <div className="flex gap-2">
+          {/* Desktop Input Bar (When Chat is Open) */}
+          {chatOpen && (
+            <div className="flex gap-2 mt-1.5 bg-black/95 p-2 rounded border border-yellow-400 shadow-2xl">
               <input
                 ref={chatInputRef}
                 type="text"
@@ -1357,25 +1428,33 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                     setChatOpen(false);
                   }
                 }}
-                placeholder="Mesaj veya komut (/help, /spawn, /login...)..."
-                className="w-full bg-black/95 border-2 border-yellow-400 px-3 py-1.5 sm:py-2 text-lg sm:text-2xl text-white outline-none rounded"
+                placeholder="Mesaj veya /komut..."
+                className="w-full bg-black border border-gray-600 px-3 py-1.5 text-xl text-white outline-none rounded focus:border-yellow-400"
               />
               <button
                 onClick={handleSendChat}
-                className="px-4 py-1.5 sm:py-2 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-bold text-lg sm:text-xl rounded border border-emerald-300 flex-shrink-0"
+                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-bold text-lg rounded border border-emerald-300 flex-shrink-0"
               >
                 Gönder
               </button>
-              <button
-                onClick={() => setChatOpen(false)}
-                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-base rounded border border-gray-500"
-              >
-                X
-              </button>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
+
+      {/* MOBILE IN-GAME FAINT CHAT PREVIEW (When Chat is closed on mobile) */}
+      {isTouchDevice && !chatOpen && messages.length > 0 && (
+        <div className="absolute top-14 left-2 z-10 pointer-events-none max-w-[55vw] flex flex-col gap-0.5">
+          {messages.slice(-3).map((m) => (
+            <div key={m.id} className="bg-black/50 px-2 py-0.5 rounded text-[11px] text-white truncate shadow">
+              <span className={m.isSystem ? 'text-yellow-300 font-bold' : 'text-emerald-300 font-bold'}>
+                {m.sender}:{' '}
+              </span>
+              <span>{m.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Inventory Modal */}
       {inventoryOpen && (

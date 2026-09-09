@@ -52,6 +52,47 @@ function createNameTagSprite(text: string, isPlayer: boolean = false): THREE.Spr
   return sprite;
 }
 
+// Generate a floating hologram / display entity billboard with support for multiple lines & colors
+function createHologramSprite(text: string): THREE.Sprite {
+  const rawLines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  const lines = rawLines.length > 0 ? rawLines : [text];
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  const lineH = 46;
+  canvas.height = Math.max(64, lines.length * lineH + 20);
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Dark semi-transparent background box like Minecraft HolographicDisplays
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+    ctx.beginPath();
+    ctx.roundRect(8, 4, canvas.width - 16, canvas.height - 8, 8);
+    ctx.fill();
+
+    ctx.font = 'bold 32px "VT323", "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const startY = (canvas.height - (lines.length - 1) * lineH) / 2;
+    lines.forEach((line, idx) => {
+      // Accent color on first line, crisp white on subsequent lines
+      ctx.fillStyle = idx === 0 ? '#fde047' : '#ffffff';
+      ctx.fillText(line, canvas.width / 2, startY + idx * lineH);
+    });
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(spriteMat);
+  const aspect = canvas.width / canvas.height;
+  const height = Math.max(0.4, 0.35 * lines.length + 0.15);
+  sprite.scale.set(height * aspect, height, 1.0);
+  sprite.renderOrder = 999;
+  return sprite;
+}
+
 // Color palettes for different entity types
 const ENTITY_COLORS: Record<string, { head: number; body: number; legs: number; arms: number }> = {
   player: { head: 0xf5d0a9, body: 0x00aaaa, legs: 0x0000aa, arms: 0xf5d0a9 },
@@ -73,6 +114,41 @@ export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
   group.position.set(data.x, data.y, data.z);
 
   const eName = (data.name || data.type || 'player').toLowerCase();
+
+  // 1. Check if this is a Hologram or Text Display entity (DecentHolograms, HolographicDisplays, text_display)
+  const isHologram = 
+    data.isHologram || 
+    eName === 'text_display' || 
+    eName === 'interaction' || 
+    eName === 'area_effect_cloud' || 
+    eName === 'marker' || 
+    (eName === 'armor_stand' && !!data.customName);
+
+  if (isHologram) {
+    const rawText = data.customName || data.name;
+    const isCleanText = rawText && !['text_display', 'interaction', 'area_effect_cloud', 'marker', 'armor_stand'].includes(rawText.toLowerCase());
+    
+    let nameTag: THREE.Sprite | undefined;
+    if (isCleanText) {
+      nameTag = createHologramSprite(rawText);
+      nameTag.position.set(0, eName === 'text_display' ? 0.2 : 1.1, 0);
+      group.add(nameTag);
+    }
+
+    return {
+      group,
+      data,
+      targetPos: new THREE.Vector3(data.x, data.y, data.z),
+      targetYaw: data.yaw || 0,
+      targetPitch: data.pitch || 0,
+      currentYaw: data.yaw || 0,
+      currentPitch: data.pitch || 0,
+      walkCycle: 0,
+      isMoving: false,
+      nameTag,
+    };
+  }
+
   const colors = ENTITY_COLORS[eName] || ENTITY_COLORS.player;
 
   let leftLeg: THREE.Mesh | undefined;

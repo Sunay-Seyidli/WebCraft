@@ -65,6 +65,7 @@ export interface MinecraftEntityData {
   name: string;
   username?: string;
   customName?: string;
+  isHologram?: boolean;
   x: number;
   y: number;
   z: number;
