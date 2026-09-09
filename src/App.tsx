@@ -65,9 +65,12 @@ export default function App() {
       {screen === 'multiplayer' && (
         <MultiplayerMenu 
           onNavigate={(s) => setScreen(s)} 
-          onJoinServer={(srv) => {
+          onJoinServer={(srv, username) => {
             setSelectedServer(srv);
             setSelectedWorld(undefined);
+            if (username) {
+              setSettings((prev) => ({ ...prev, playerName: username }));
+            }
             setScreen('game');
           }} 
         />

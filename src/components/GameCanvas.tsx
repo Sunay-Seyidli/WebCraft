@@ -98,14 +98,21 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       isSystem: true 
     }
   ]);
-  const [hotbar, setHotbar] = useState<InventoryItem[]>(initialHotbarItems);
+  const [hotbar, setHotbar] = useState<InventoryItem[]>(() => {
+    if (server) {
+      return Array.from({ length: 9 }, (_, i) => ({ type: 'air' as BlockType, count: 0, name: 'Boş' }));
+    }
+    return initialHotbarItems;
+  });
   const [serverInventory, setServerInventory] = useState<InventoryItem[]>([]);
   const [selectedHotbarIndex, setSelectedHotbarIndex] = useState(0);
   const [health, setHealth] = useState(20);
   const [hunger, setHunger] = useState(20);
   const [fps, setFps] = useState(60);
-  const [playerPos, setPlayerPos] = useState({ x: '0.0', y: '12.0', z: '0.0' });
+  const [playerPos, setPlayerPos] = useState({ x: '0.0', y: '64.0', z: '0.0' });
   const [targetedBlock, setTargetedBlock] = useState<TargetedBlockData | null>(null);
+
+  const lastActionTimeRef = useRef<number>(0);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
@@ -313,19 +320,12 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
           }
         }
       }
-    } else {
-      // In multiplayer, create a temporary transparent staging glass platform so the player doesn't fall into the void before chunks arrive
-      for (let px = -2; px <= 2; px++) {
-        for (let pz = -2; pz <= 2; pz++) {
-          addBlockAt(px, 10, pz, 'glass');
-        }
-      }
     }
 
     // Player Physics & Controls State
     const player = {
       x: 0,
-      y: 13,
+      y: 64,
       z: 0,
       vx: 0,
       vy: 0,
@@ -425,6 +425,10 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     // BREAK ACTION
     const performBreak = () => {
       if (pausedRef.current || inventoryOpenRef.current || chatOpenRef.current) return;
+      const now = performance.now();
+      if (now - lastActionTimeRef.current < 280) return;
+      lastActionTimeRef.current = now;
+
       const target = getRaycastTarget();
       if (!target) return;
 
@@ -434,44 +438,53 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         return;
       }
 
-      spawnBlockParticles(target.x, target.y, target.z, target.type);
-      const key = `${target.x},${target.y},${target.z}`;
-      scene.remove(target.mesh);
-      target.mesh.geometry.dispose();
-      blocksMap.delete(key);
-      soundManager.playDig(target.type);
+      if (!server) {
+        // Singleplayer: execute immediately
+        spawnBlockParticles(target.x, target.y, target.z, target.type);
+        const key = `${target.x},${target.y},${target.z}`;
+        scene.remove(target.mesh);
+        target.mesh.geometry.dispose();
+        blocksMap.delete(key);
+        soundManager.playDig(target.type);
 
-      // Send dig packet to Minecraft server via WebSocket bridge
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: 'dig',
-            x: target.x,
-            y: target.y,
-            z: target.z,
-          })
-        );
-      }
-
-      setHotbar((prev) => {
-        const updated = [...prev];
-        const foundIdx = updated.findIndex((item) => item.type === target.type);
-        if (foundIdx !== -1) {
-          updated[foundIdx] = { ...updated[foundIdx], count: updated[foundIdx].count + 1 };
-        } else {
-          const emptyIdx = updated.findIndex((item) => item.count <= 0);
-          if (emptyIdx !== -1) {
-            updated[emptyIdx] = { type: target.type, count: 1, name: BLOCK_NAMES[target.type] || target.type };
+        setHotbar((prev) => {
+          const updated = [...prev];
+          const foundIdx = updated.findIndex((item) => item.type === target.type);
+          if (foundIdx !== -1) {
+            updated[foundIdx] = { ...updated[foundIdx], count: updated[foundIdx].count + 1 };
+          } else {
+            const emptyIdx = updated.findIndex((item) => item.count <= 0);
+            if (emptyIdx !== -1) {
+              updated[emptyIdx] = { type: target.type, count: 1, name: BLOCK_NAMES[target.type] || target.type };
+            }
           }
+          return updated;
+        });
+        highlightBox.visible = false;
+      } else {
+        // Multiplayer: MUST SEND TO SERVER FIRST!
+        // DO NOT delete or alter blocks locally until server confirms with blockUpdate packet!
+        soundManager.playClick();
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: 'dig',
+              x: target.x,
+              y: target.y,
+              z: target.z,
+            })
+          );
         }
-        return updated;
-      });
-      highlightBox.visible = false;
+      }
     };
 
     // PLACE ACTION
     const performPlace = () => {
       if (pausedRef.current || inventoryOpenRef.current || chatOpenRef.current) return;
+      const now = performance.now();
+      if (now - lastActionTimeRef.current < 280) return;
+      lastActionTimeRef.current = now;
+
       const target = getRaycastTarget();
       if (!target) return;
 
@@ -492,8 +505,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       const playerMaxX = player.x + 0.45;
       const playerMinZ = player.z - 0.45;
       const playerMaxZ = player.z + 0.45;
-      const playerMinY = player.y - 1.2;
-      const playerMaxY = player.y + 0.8;
+      const playerMinY = player.y - 0.2;
+      const playerMaxY = player.y + 1.8;
 
       const insidePlayer =
         playerMaxX > placeX - 0.5 &&
@@ -508,33 +521,39 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       const key = `${placeX},${placeY},${placeZ}`;
       if (blocksMap.has(key)) return;
 
-      addBlockAt(placeX, placeY, placeZ, currentItem.type);
-      soundManager.playDig(currentItem.type);
-
-      // Send place packet to Minecraft server via WebSocket bridge
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: 'place',
-            x: target.x,
-            y: target.y,
-            z: target.z,
-            face: {
-              x: Math.round(target.faceNormal.x),
-              y: Math.round(target.faceNormal.y),
-              z: Math.round(target.faceNormal.z),
-            },
-          })
-        );
-      }
-
-      setHotbar((prev) => {
-        const updated = [...prev];
-        if (updated[activeSlot] && updated[activeSlot].count > 0) {
-          updated[activeSlot] = { ...updated[activeSlot], count: updated[activeSlot].count - 1 };
+      if (!server) {
+        // Singleplayer: execute immediately
+        addBlockAt(placeX, placeY, placeZ, currentItem.type);
+        soundManager.playDig(currentItem.type);
+        setHotbar((prev) => {
+          const updated = [...prev];
+          if (updated[activeSlot] && updated[activeSlot].count > 0) {
+            updated[activeSlot] = { ...updated[activeSlot], count: updated[activeSlot].count - 1 };
+          }
+          return updated;
+        });
+      } else {
+        // Multiplayer: MUST SEND TO SERVER FIRST!
+        // DO NOT create block locally, DO NOT decrement inventory locally!
+        // Wait for server to confirm placement with blockUpdate & inventory packets!
+        soundManager.playClick();
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: 'place',
+              x: target.x,
+              y: target.y,
+              z: target.z,
+              face: {
+                x: Math.round(target.faceNormal.x),
+                y: Math.round(target.faceNormal.y),
+                z: Math.round(target.faceNormal.z),
+              },
+              slot: activeSlot,
+            })
+          );
         }
-        return updated;
-      });
+      }
     };
 
     actionsRef.current = { breakBlock: performBreak, placeBlock: performPlace };
@@ -627,8 +646,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     // Connect WebSocket Minecraft Java Protocol Bridge if server is specified
     if (server) {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const playerName = settings.skin === 'alex' ? 'Alex' : settings.skin === 'steve' ? 'Steve' : 'WebPlayer';
-      const wsUrl = `${wsProtocol}//${window.location.host}/ws-proxy?host=${encodeURIComponent(server.ip)}&port=${server.port}&username=${encodeURIComponent(playerName)}&mode=protocol`;
+      const chosenPlayerName = (settings.playerName?.trim() || localStorage.getItem('mc_player_username') || 'Steve').replace(/[^a-zA-Z0-9_]/g, '');
+      const wsUrl = `${wsProtocol}//${window.location.host}/ws-proxy?host=${encodeURIComponent(server.ip)}&port=${server.port}&username=${encodeURIComponent(chosenPlayerName || 'Steve')}&mode=protocol`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -651,15 +670,31 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               setServerLoading(false);
               setServerStatusText('Dünyaya katıldınız!');
               player.x = data.x;
-              player.y = data.y + 1.6;
+              player.y = data.y;
               player.z = data.z;
-              camera.position.set(data.x, data.y + 1.6, data.z);
+              player.vx = 0;
+              player.vy = 0;
+              player.vz = 0;
+              if (typeof data.yaw === 'number') player.yaw = data.yaw;
+              if (typeof data.pitch === 'number') player.pitch = data.pitch;
+              camera.position.set(data.x, data.y + 1.62, data.z);
               if (typeof data.health === 'number') setHealth(data.health);
               if (typeof data.food === 'number') setHunger(data.food);
               addChatMessage('Sistem', `Dünyaya doğdunuz! X:${data.x.toFixed(1)} Y:${data.y.toFixed(1)} Z:${data.z.toFixed(1)}`, true);
+            } else if (data.type === 'teleport') {
+              player.x = data.x;
+              player.y = data.y;
+              player.z = data.z;
+              player.vx = 0;
+              player.vy = 0;
+              player.vz = 0;
+              if (typeof data.yaw === 'number') player.yaw = data.yaw;
+              if (typeof data.pitch === 'number') player.pitch = data.pitch;
+              camera.position.set(data.x, data.y + 1.62, data.z);
             } else if (data.type === 'blocks') {
               // Real heightmap blocks streamed from the Minecraft Java server!
               if (Array.isArray(data.blocks)) {
+                setServerLoading(false);
                 for (const b of data.blocks) {
                   const mapped = mapMinecraftBlock(b.type);
                   addBlockAt(b.x, b.y, b.z, mapped);
@@ -671,6 +706,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               if (!data.blockType || data.blockType === 'air' || data.blockType === 'cave_air' || data.blockType === 'void_air') {
                 const mesh = blocksMap.get(key);
                 if (mesh) {
+                  const blockType = (mesh.userData?.type || 'stone') as BlockType;
+                  spawnBlockParticles(data.x, data.y, data.z, blockType);
+                  soundManager.playDig(blockType);
                   scene.remove(mesh);
                   mesh.geometry.dispose();
                   blocksMap.delete(key);
@@ -678,6 +716,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               } else {
                 const mapped = mapMinecraftBlock(data.blockType);
                 addBlockAt(data.x, data.y, data.z, mapped);
+                soundManager.playDig(mapped);
               }
             } else if (data.type === 'chat') {
               addChatMessage(data.sender || 'Sunucu', data.text || '', data.isSystem);
@@ -847,25 +886,63 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
           dz += Math.sin(player.yaw) * moveSpeed;
         }
 
-        player.x += dx;
-        player.z += dz;
+        // Horizontal movement collision check & auto-step
+        const nextX = player.x + dx;
+        const nextZ = player.z + dz;
 
-        // Gravity & Jumping
-        if (isJump && player.y <= 11.05) {
+        // Auto-step: if moving into a 1-block elevation, check if can step up
+        const testX = Math.round(nextX);
+        const testZ = Math.round(nextZ);
+        const feetY = Math.round(player.y);
+        const isBlockAtFeet = blocksMap.has(`${testX},${feetY},${testZ}`);
+        const isBlockAtHead = blocksMap.has(`${testX},${feetY + 1},${testZ}`);
+
+        if (isBlockAtFeet && !isBlockAtHead) {
+          // Step up 1 block smoothly
+          player.y = feetY + 0.5;
+          player.vy = 0;
+          player.x = nextX;
+          player.z = nextZ;
+        } else if (!isBlockAtFeet) {
+          player.x = nextX;
+          player.z = nextZ;
+        }
+
+        // Voxel Ground Detection & Gravity
+        let groundY = -999;
+        const curBlockX = Math.round(player.x);
+        const curBlockZ = Math.round(player.z);
+
+        for (let by = Math.ceil(player.y + 0.5); by >= Math.floor(player.y) - 6; by--) {
+          if (blocksMap.has(`${curBlockX},${by},${curBlockZ}`)) {
+            groundY = by + 0.5;
+            break;
+          }
+        }
+
+        let isOnGround = false;
+        if (groundY !== -999 && (player.y + player.vy <= groundY + 0.15)) {
+          player.y = groundY;
+          player.vy = 0;
+          isOnGround = true;
+        } else if (!serverLoading) {
+          player.y += player.vy;
+          player.vy -= player.gravity;
+          if (player.y < -64) {
+            // Void limit
+            player.y = -64;
+            player.vy = 0;
+          }
+        }
+
+        // Jumping
+        if (isJump && isOnGround) {
           player.vy = player.jumpForce;
           soundManager.playFootstep();
         }
 
-        player.y += player.vy;
-        player.vy -= player.gravity;
-
-        if (player.y < 11) {
-          player.y = 11;
-          player.vy = 0;
-        }
-
-        // Camera position & look
-        camera.position.set(player.x, player.y + 0.6, player.z);
+        // Camera position & look (eye level is 1.62m above feet)
+        camera.position.set(player.x, player.y + 1.62, player.z);
 
         const targetX = camera.position.x - Math.sin(player.yaw) * Math.cos(player.pitch);
         const targetY = camera.position.y + Math.sin(player.pitch);
@@ -875,9 +952,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         // Sync position every 3 frames (~20Hz Minecraft tick rate)
         if (frameCount % 3 === 0) {
           setPlayerPos({
-            x: player.x.toFixed(1),
-            y: player.y.toFixed(1),
-            z: player.z.toFixed(1)
+            x: player.x.toFixed(2),
+            y: player.y.toFixed(2),
+            z: player.z.toFixed(2)
           });
 
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -885,11 +962,11 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               JSON.stringify({
                 type: 'move',
                 x: player.x,
-                y: player.y - 1.6,
+                y: player.y,
                 z: player.z,
                 yaw: player.yaw,
                 pitch: player.pitch,
-                onGround: player.vy === 0,
+                onGround: isOnGround,
               })
             );
           }
@@ -1340,19 +1417,31 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
             {/* Main Inventory Section */}
             <div>
-              <div className="text-sm font-bold text-gray-700 mb-1">Ana Envanter</div>
+              <div className="text-sm font-bold text-gray-700 mb-1">
+                {server ? 'Sunucu Envanteri (Minecraft)' : 'Yaratıcı Envanter'}
+              </div>
               <div className="grid grid-cols-9 gap-1.5 bg-[#8b8b8b] p-2.5 border-2 border-inset border-gray-600 rounded max-h-[40vh] overflow-y-auto">
-                {(serverInventory.length > 0 ? serverInventory : hotbar.concat(hotbar)).map((item, idx) => (
+                {(server 
+                  ? (serverInventory.length > 0 ? serverInventory : Array.from({ length: 27 }, () => ({ type: 'air' as BlockType, count: 0, name: 'Boş' })))
+                  : (serverInventory.length > 0 ? serverInventory : initialHotbarItems)
+                ).map((item, idx) => (
                   <div 
                     key={`inv-${idx}`}
                     onClick={() => {
-                      soundManager.playPop();
-                      handleSelectHotbarSlot(idx % 9);
+                      if (item.type !== 'air') {
+                        soundManager.playPop();
+                        handleSelectHotbarSlot(idx % 9);
+                      }
                     }}
-                    className="w-10 h-10 sm:w-12 sm:h-12 bg-[#c6c6c6] border-2 border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] cursor-pointer flex flex-col items-center justify-center text-[10px] sm:text-xs font-bold hover:bg-gray-300"
+                    className={`w-10 h-10 sm:w-12 sm:h-12 bg-[#c6c6c6] border-2 border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] flex flex-col items-center justify-center text-[10px] sm:text-xs font-bold ${
+                      item.type !== 'air' ? 'cursor-pointer hover:bg-gray-300' : 'cursor-default opacity-50'
+                    }`}
+                    title={item.name || item.type}
                   >
-                    <span className="truncate w-full text-center px-0.5">{item.type !== 'air' ? item.type.slice(0, 4) : ''}</span>
-                    {item.count > 0 && <span className="text-blue-900">{item.count}</span>}
+                    <span className="truncate w-full text-center px-0.5 text-black">
+                      {item.type !== 'air' ? (item.name || item.type).slice(0, 5) : ''}
+                    </span>
+                    {item.count > 0 && <span className="text-blue-900 font-extrabold">{item.count}</span>}
                   </div>
                 ))}
               </div>

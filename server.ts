@@ -114,51 +114,31 @@ function extractChunkColumnBlocks(bot: any, chunkStartX: number, chunkStartZ: nu
   const playerY = bot.entity ? Math.floor(bot.entity.position.y) : 64;
   const vec = new Vec3(0, 0, 0);
 
-  // Scan range: y=140 down to y=-24
-  const startY = Math.min(220, Math.max(80, playerY + 32));
-  const bottomY = Math.max(-32, playerY - 48);
+  const startY = Math.min(256, Math.max(90, playerY + 36));
+  const bottomY = Math.max(-60, playerY - 45);
 
   for (let x = chunkStartX; x < chunkStartX + 16; x++) {
     for (let z = chunkStartZ; z < chunkStartZ + 16; z++) {
-      // Coarse search: step by 4 blocks down to find top non-air block rapidly
-      let hitY = -999;
-      for (let y = startY; y >= bottomY; y -= 4) {
+      let consecutiveSolid = 0;
+
+      for (let y = startY; y >= bottomY; y--) {
         vec.set(x, y, z);
         const b = bot.blockAt(vec);
-        if (b && b.name && b.name !== "air" && b.name !== "cave_air" && b.name !== "void_air") {
-          hitY = y;
-          break;
-        }
-      }
+        const isAir = !b || !b.name || b.name === "air" || b.name === "cave_air" || b.name === "void_air";
 
-      if (hitY !== -999) {
-        // Refine search: step up to 3 blocks to locate the exact top surface block
-        let topY = hitY;
-        for (let y = Math.min(startY, hitY + 3); y >= hitY; y--) {
-          vec.set(x, y, z);
-          const b = bot.blockAt(vec);
-          if (b && b.name && b.name !== "air" && b.name !== "cave_air" && b.name !== "void_air") {
-            topY = y;
-            break;
-          }
+        if (isAir) {
+          consecutiveSolid = 0;
+          continue;
         }
 
-        // Collect surface block and up to 2 filler blocks below it (accurate heightmap & slope representation)
-        for (let y = topY; y >= Math.max(bottomY, topY - 2); y--) {
-          vec.set(x, y, z);
-          const b = bot.blockAt(vec);
-          if (b && b.name && b.name !== "air" && b.name !== "cave_air" && b.name !== "void_air") {
-            blocks.push({ x, y, z, type: b.name });
-          }
-        }
+        consecutiveSolid++;
 
-        // Check for any structures or tree canopy above topY (up to 12 blocks above)
-        for (let y = topY + 1; y <= Math.min(topY + 12, startY); y++) {
-          vec.set(x, y, z);
-          const b = bot.blockAt(vec);
-          if (b && b.name && b.name !== "air" && b.name !== "cave_air" && b.name !== "void_air") {
-            blocks.push({ x, y, z, type: b.name });
-          }
+        // Keep top 3 layers of each surface (plus transparent/liquid blocks like water, leaves, glass)
+        if (consecutiveSolid <= 3 || b.transparent || b.name === "water" || b.name === "lava") {
+          blocks.push({ x, y, z, type: b.name });
+        } else if (consecutiveSolid > 7) {
+          // deep solid stone/dirt underneath - skip until next air gap
+          continue;
         }
       }
     }
@@ -539,6 +519,23 @@ async function startServer() {
               type: "health",
               health: bot.health,
               food: bot.food,
+            })
+          );
+        }
+      });
+
+      // Handle server teleport / forced movement
+      bot.on("forcedMove", () => {
+        if (ws.readyState === WebSocket.OPEN && bot.entity && bot.entity.position) {
+          const pos = bot.entity.position;
+          ws.send(
+            JSON.stringify({
+              type: "teleport",
+              x: pos.x,
+              y: pos.y,
+              z: pos.z,
+              yaw: bot.entity.yaw ?? 0,
+              pitch: bot.entity.pitch ?? 0,
             })
           );
         }

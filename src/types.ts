@@ -47,6 +47,7 @@ export interface GameSettings {
   language: 'tr' | 'en';
   skin: 'steve' | 'alex' | 'custom';
   customSkinColor: string;
+  playerName?: string;
 }
 
 export interface ChatMessage {

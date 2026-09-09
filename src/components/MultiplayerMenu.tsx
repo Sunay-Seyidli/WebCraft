@@ -4,7 +4,7 @@ import { soundManager } from '../utils/audio';
 
 interface MultiplayerMenuProps {
   onNavigate: (screen: GameScreen) => void;
-  onJoinServer: (server: ServerInfo) => void;
+  onJoinServer: (server: ServerInfo, playerName?: string) => void;
 }
 
 const defaultServers: ServerInfo[] = [
@@ -57,15 +57,18 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
     return defaultServers;
   });
 
-  const [selectedId, setSelectedId] = useState<string>(() => servers[0]?.id || 'hypixel');
+  const [selectedId, setSelectedId] = useState<string>(() => servers[0]?.id || 'local');
   const [isPinging, setIsPinging] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDirectModal, setShowDirectModal] = useState(false);
+  const [playerName, setPlayerName] = useState<string>(() => {
+    return localStorage.getItem('mc_player_username') || 'Steve';
+  });
 
   // Form states for adding a server
   const [newServerName, setNewServerName] = useState('Minecraft Sunucum');
   const [newServerAddress, setNewServerAddress] = useState('');
-  const [directAddress, setDirectAddress] = useState('mc.hypixel.net');
+  const [directAddress, setDirectAddress] = useState('localhost:25565');
 
   // Ping a specific server
   const pingServer = async (srv: ServerInfo): Promise<ServerInfo> => {
@@ -113,7 +116,9 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
 
   const handleJoin = (server: ServerInfo) => {
     soundManager.playClick();
-    onJoinServer(server);
+    const cleanName = playerName.trim() || 'Player_' + Math.floor(Math.random() * 899 + 100);
+    localStorage.setItem('mc_player_username', cleanName);
+    onJoinServer(server, cleanName);
     onNavigate('game');
   };
 
@@ -185,20 +190,42 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
       <div className="absolute inset-0 bg-black/65" />
 
       {/* Header */}
-      <div className="relative z-10 text-center pt-2 sm:pt-4">
-        <div className="text-3xl sm:text-5xl text-white font-bold tracking-wider drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
+      <div className="relative z-10 text-center pt-2 sm:pt-3">
+        <div className="text-3xl sm:text-4xl text-white font-bold tracking-wider drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
           🖧 Sunucu Bağlantısı (Multiplayer - 1.21.4)
         </div>
-        <div className="text-gray-300 text-sm sm:text-lg mt-2 px-4">
-          <div className="mb-1">Sunucuya katılmak için çift tıklayın veya "Sunucuya Katıl" butonuna basın.</div>
-          <div className="text-amber-300 text-xs sm:text-sm">⚠️ Not: Bu istemci sadece <span className="font-bold">OFFLINE-MODE</span> Minecraft sunuculara bağlanabilir.</div>
-          <div className="text-gray-400 text-xs sm:text-sm">Hypixel, CubeCraft gibi büyük sunucular online-mode gerektirir ve ÇALIŞMAZ.</div>
+        <div className="text-amber-300 text-xs sm:text-sm mt-1">
+          ⚠️ Not: Sadece <span className="font-bold underline">OFFLINE-MODE</span> Minecraft Java sunuculara bağlanabilir.
         </div>
-        {isPinging && <span className="text-yellow-400 animate-pulse text-sm sm:text-base mt-2 block">[Sunucular Pingleniyor...]</span>}
+        {isPinging && <span className="text-yellow-400 animate-pulse text-xs sm:text-sm block">[Sunucular Pingleniyor...]</span>}
+      </div>
+
+      {/* Player Nickname Editor Bar */}
+      <div className="relative z-10 w-full max-w-3xl flex flex-wrap items-center justify-between bg-[#222222]/95 border-2 border-[#555] px-4 py-2 rounded shadow-xl gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-yellow-400 font-bold text-lg sm:text-xl flex items-center gap-1.5">
+            👤 Oyuncu Adınız:
+          </span>
+          <input
+            type="text"
+            value={playerName}
+            onChange={(e) => {
+              const val = e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 16);
+              setPlayerName(val);
+              localStorage.setItem('mc_player_username', val);
+            }}
+            placeholder="Kullanıcı Adı"
+            maxLength={16}
+            className="bg-black/90 border-2 border-yellow-500/80 focus:border-yellow-400 px-3 py-1 text-white text-lg sm:text-xl font-mono rounded outline-none w-44 sm:w-56 shadow-inner"
+          />
+        </div>
+        <div className="text-emerald-400 text-xs sm:text-sm font-sans flex items-center gap-1">
+          <span>✓ Sunucuda bu isim görünecektir</span>
+        </div>
       </div>
 
       {/* Server List (Minecraft Java Style) */}
-      <div className="relative z-10 w-full max-w-3xl h-[54vh] sm:h-[58vh] bg-black/75 border-4 border-[#373737] overflow-y-auto p-2 sm:p-3 flex flex-col gap-2.5 shadow-2xl">
+      <div className="relative z-10 w-full max-w-3xl h-[50vh] sm:h-[54vh] bg-black/75 border-4 border-[#373737] overflow-y-auto p-2 sm:p-3 flex flex-col gap-2.5 shadow-2xl">
         {servers.map((s) => {
           const isSelected = s.id === selectedId;
           return (
