@@ -1381,6 +1381,11 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
     soundManager.playClick();
 
+    // Commands (starts with '/') are not echoed back by the server, so we show them locally
+    if (text.startsWith('/')) {
+      addChatMessage('Komut', text, true);
+    }
+
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'chat', text }));
     }

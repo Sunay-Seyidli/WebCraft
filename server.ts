@@ -1328,41 +1328,16 @@ async function startServer() {
             }
           }
 
-          // 3. Chat & Commands (Immediate 0ms dispatch)
+          // 3. Chat & Commands (Safe and native Mineflayer dispatch)
           else if (msg.type === "chat" && msg.text) {
             const text = msg.text.trim();
             if (!text) return;
             console.log(`[MC Bridge] Client sending chat/command: "${text}"`);
-            
-            if (text.startsWith("/")) {
-              const cmd = text.slice(1);
-              let sent = false;
-              if (bot._client && typeof bot._client.write === "function") {
-                try {
-                  bot._client.write("chat_command", { command: cmd });
-                  sent = true;
-                } catch {
-                  try {
-                    bot._client.write("chat_command", {
-                      command: cmd,
-                      timestamp: BigInt(Date.now()),
-                      salt: 0n,
-                      argumentSignatures: [],
-                      signedPreview: false,
-                      messageCount: 0,
-                      acknowledged: Buffer.alloc(3),
-                      previousMessages: [],
-                    });
-                    sent = true;
-                  } catch {}
-                }
-              }
-              if (!sent && typeof bot.chat === "function") {
+            if (bot && typeof bot.chat === "function") {
+              try {
                 bot.chat(text);
-              }
-            } else {
-              if (typeof bot.chat === "function") {
-                bot.chat(text);
+              } catch (err: any) {
+                console.error("[MC Bridge] Error sending bot chat:", err.message);
               }
             }
           }
