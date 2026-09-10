@@ -8,6 +8,7 @@ import url from "url";
 import mineflayer from "mineflayer";
 import { Vec3 } from "vec3";
 import { SocksClient } from "socks";
+import { ensureMinecraftAssets } from "./server/assetDownloader";
 
 // Public high-speed SOCKS5 proxies for Minecraft TCP routing
 const PUBLIC_SOCKS5_PROXIES = [
@@ -1376,7 +1377,19 @@ async function startServer() {
             }
           }
 
-          // 4. Dig / Break Block (Works in Survival, Creative, and 1.21.4)
+          // 4. Swing Arm Packet (1.21.4 arm_animation)
+          else if (msg.type === "swingArm" && bot) {
+            try {
+              bot.swingArm("right");
+            } catch {}
+            if (bot._client && bot._client.state === "play") {
+              try {
+                bot._client.write("arm_animation", { hand: 0 });
+              } catch {}
+            }
+          }
+
+          // 5. Dig / Break Block (Works in Survival, Creative, and 1.21.4)
           else if (msg.type === "dig") {
             const bx = Math.floor(msg.x);
             const by = Math.floor(msg.y);
@@ -1393,6 +1406,11 @@ async function startServer() {
             try {
               bot.swingArm("right");
             } catch {}
+            if (bot._client && bot._client.state === "play") {
+              try {
+                bot._client.write("arm_animation", { hand: 0 });
+              } catch {}
+            }
 
             // Direct packet sender for 1.21.4 and older versions
             const sendDirectDigPackets = () => {
@@ -1452,7 +1470,7 @@ async function startServer() {
             }, 80);
           }
 
-          // 5. Place Block (Works for 1.21.4 with worldBorderHit, slot switching, and direction)
+          // 6. Place Block (Works for 1.21.4 with worldBorderHit, slot switching, and direction)
           else if (msg.type === "place") {
             const bx = Math.floor(msg.x);
             const by = Math.floor(msg.y);
@@ -1467,6 +1485,11 @@ async function startServer() {
               try {
                 bot.setQuickBarSlot(msg.slot);
               } catch {}
+              if (bot._client && bot._client.state === "play") {
+                try {
+                  bot._client.write("held_item_slot", { slotId: msg.slot });
+                } catch {}
+              }
             }
 
             try {
@@ -1476,6 +1499,11 @@ async function startServer() {
             try {
               bot.swingArm("right");
             } catch {}
+            if (bot._client && bot._client.state === "play") {
+              try {
+                bot._client.write("arm_animation", { hand: 0 });
+              } catch {}
+            }
 
             // Determine Minecraft face direction:
             // 0: -Y (bottom), 1: +Y (top), 2: -Z (north), 3: +Z (south), 4: -X (west), 5: +X (east)
@@ -1518,25 +1546,36 @@ async function startServer() {
               }
             };
 
-            if (ref && bot.heldItem) {
-              bot.placeBlock(ref, faceVec).catch(() => {
+            if (ref) {
+              if (ref.name.includes("chest") || ref.name.includes("door") || ref.name.includes("button") || ref.name.includes("lever") || ref.name.includes("crafting_table") || ref.name.includes("furnace") || ref.name.includes("gate")) {
+                try { bot.activateBlock(ref); } catch {}
+              } else if (bot.heldItem) {
+                bot.placeBlock(ref, faceVec).catch(() => {
+                  sendDirectPlacePacket();
+                });
+              } else {
                 sendDirectPlacePacket();
-              });
+              }
             } else {
               sendDirectPlacePacket();
             }
           }
 
-          // 6. Select Hotbar Slot
+          // 7. Select Hotbar Slot
           else if (msg.type === "selectSlot" && typeof msg.slot === "number") {
             if (msg.slot >= 0 && msg.slot <= 8) {
               try {
                 bot.setQuickBarSlot(msg.slot);
               } catch {}
+              if (bot._client && bot._client.state === "play") {
+                try {
+                  bot._client.write("held_item_slot", { slotId: msg.slot });
+                } catch {}
+              }
             }
           }
 
-          // 7. Attack Entity (Mob, Player, or NPC)
+          // 8. Attack Entity (Mob, Player, or NPC)
           else if (msg.type === "attackEntity" && msg.entityId !== undefined && bot) {
             const eId = Number(msg.entityId);
             const target = bot.entities && (bot.entities[eId] || bot.entities[msg.entityId]);
@@ -1563,9 +1602,14 @@ async function startServer() {
             try {
               bot.swingArm("right");
             } catch {}
+            if (bot._client && bot._client.state === "play") {
+              try {
+                bot._client.write("arm_animation", { hand: 0 });
+              } catch {}
+            }
           }
 
-          // 8. Interact / Use Entity (NPC dialogue, villager trade, mount, right-click)
+          // 9. Interact / Use Entity (NPC dialogue, villager trade, mount, right-click)
           else if (msg.type === "useEntity" && msg.entityId !== undefined && bot) {
             const eId = Number(msg.entityId);
             const target = bot.entities && (bot.entities[eId] || bot.entities[msg.entityId]);
@@ -1593,6 +1637,11 @@ async function startServer() {
             try {
               bot.swingArm("right");
             } catch {}
+            if (bot._client && bot._client.state === "play") {
+              try {
+                bot._client.write("arm_animation", { hand: 0 });
+              } catch {}
+            }
           }
 
           // 6. Request chunks manually
@@ -1627,6 +1676,11 @@ async function startServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  // Asynchronously ensure official Minecraft 1.21.4 assets are cached
+  ensureMinecraftAssets().catch((err) => {
+    console.error('[AssetDownloader] Background initialization error:', err);
+  });
 
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(

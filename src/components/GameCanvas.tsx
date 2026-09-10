@@ -457,13 +457,23 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       let mats: THREE.Material | THREE.Material[];
       if ('top' in tex) {
         const sideMat = new THREE.MeshLambertMaterial({ map: tex.side });
-        const topMat = new THREE.MeshLambertMaterial({ map: tex.top });
+        const topMat = new THREE.MeshLambertMaterial({ 
+          map: tex.top, 
+          color: (type === 'grass' || (type as string) === 'grass_block') ? new THREE.Color('#55ab2f') : new THREE.Color('#ffffff') 
+        });
         const botMat = new THREE.MeshLambertMaterial({ map: tex.bottom });
         mats = [sideMat, sideMat, topMat, botMat, sideMat, sideMat];
       } else {
-        const isTransparent = type === 'glass' || type === 'water';
+        const isTransparent = type === 'glass' || type === 'water' || type.includes('leaves');
+        const isFoliage = type.includes('leaves') || type.includes('vine') || type.includes('bush') || type.includes('sapling');
+        let tintColor = '#ffffff';
+        if (isFoliage && !type.includes('cherry')) {
+          tintColor = '#388e3c';
+        }
+
         mats = new THREE.MeshLambertMaterial({
           map: tex,
+          color: new THREE.Color(tintColor),
           transparent: isTransparent,
           opacity: type === 'water' ? 0.7 : type === 'glass' ? 0.85 : 1.0
         });
@@ -777,14 +787,21 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       return null;
     };
 
+    const isMouseDownLeftRef = useRef(false);
+    const isMouseDownRightRef = useRef(false);
+
     // BREAK ACTION
     const performBreak = () => {
       if (pausedRef.current || inventoryOpenRef.current || chatOpenRef.current) return;
       const now = performance.now();
-      if (now - lastActionTimeRef.current < 200) return;
+      if (now - lastActionTimeRef.current < 180) return;
       lastActionTimeRef.current = now;
 
       triggerHandSwing();
+
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'swingArm' }));
+      }
 
       // Check if clicking an entity (mob/player/NPC attack)
       if (entitiesMapRef.current) {
@@ -881,6 +898,10 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       lastActionTimeRef.current = now;
 
       triggerHandSwing();
+
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'swingArm' }));
+      }
 
       // Check if right clicking an entity (interact / NPC dialogue / villager trade)
       if (entitiesMapRef.current) {
@@ -1000,9 +1021,13 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         renderer.domElement.requestPointerLock();
       }
 
-      if (e.button === 0) performBreak();
-      else if (e.button === 2) performPlace();
-      else if (e.button === 1) {
+      if (e.button === 0) {
+        isMouseDownLeftRef.current = true;
+        performBreak();
+      } else if (e.button === 2) {
+        isMouseDownRightRef.current = true;
+        performPlace();
+      } else if (e.button === 1) {
         const target = getRaycastTarget();
         if (target) {
           const found = hotbarRef.current.findIndex((i) => i.type === target.type);
@@ -1012,6 +1037,11 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
           }
         }
       }
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (e.button === 0) isMouseDownLeftRef.current = false;
+      if (e.button === 2) isMouseDownRightRef.current = false;
     };
 
     const handleContextMenu = (e: MouseEvent) => e.preventDefault();
@@ -1026,6 +1056,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     };
 
     renderer.domElement.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mouseup', handleMouseUp);
     renderer.domElement.addEventListener('contextmenu', handleContextMenu);
     window.addEventListener('wheel', handleWheel, { passive: true });
 
@@ -1445,38 +1476,93 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
           soundManager.playFootstep(feetBlock ? feetBlock.type : 'stone');
         }
 
-        // 2. Horizontal Movement & Edge Sneaking
-        let nextX = player.x + inputX;
-        let nextZ = player.z + inputZ;
+        // Continuous action while mouse button held
+        if (isMouseDownLeftRef.current) performBreak();
+        if (isMouseDownRightRef.current) performPlace();
+
+        // 2. Horizontal Movement & Edge Sneaking with AABB Bounding Box
+        const pRadius = 0.28; // Standard Minecraft player collision radius
+        let tryX = player.x + inputX;
+        let tryZ = player.z + inputZ;
 
         // Minecraft Sneak Ledge Protection
         if (isSneaking && isOnGround) {
-          const checkNextX = Math.floor(nextX);
-          const checkNextZ = Math.floor(nextZ);
+          const checkNextX = Math.floor(tryX);
+          const checkNextZ = Math.floor(tryZ);
           const feetBlockY = Math.floor(player.y - 0.1);
           if (!blocksMap.has(`${checkNextX},${feetBlockY},${checkNextZ}`) && blocksMap.size > 0) {
-            nextX = player.x;
-            nextZ = player.z;
+            tryX = player.x;
+            tryZ = player.z;
           }
         }
 
-        // Wall collision & Smooth Auto-step
-        const testX = Math.floor(nextX);
-        const testZ = Math.floor(nextZ);
-        const feetY = Math.floor(player.y);
+        const currentFeetY = Math.floor(player.y);
+        const headY = Math.floor(player.y + 1.5);
 
-        const isBlockAtFeet = blocksMap.has(`${testX},${feetY},${testZ}`);
-        const isBlockAtHead = blocksMap.has(`${testX},${feetY + 1},${testZ}`);
+        // Test X Movement & Wall Collisions
+        let collideX = false;
+        if (Math.abs(inputX) > 0.0001) {
+          const checkX = Math.floor(tryX + (inputX > 0 ? pRadius : -pRadius));
+          for (const oz of [-pRadius, 0, pRadius]) {
+            const sampleZ = Math.floor(player.z + oz);
+            for (let y = currentFeetY; y <= headY; y++) {
+              if (blocksMap.has(`${checkX},${y},${sampleZ}`)) {
+                collideX = true;
+                break;
+              }
+            }
+            if (collideX) break;
+          }
+        }
 
-        if (isBlockAtFeet && !isBlockAtHead && isOnGround) {
-          // Step up 1 block smoothly
-          player.y = feetY + 1.0;
-          player.vy = 0;
-          player.x = nextX;
-          player.z = nextZ;
-        } else if (!isBlockAtFeet) {
-          player.x = nextX;
-          player.z = nextZ;
+        if (!collideX) {
+          player.x = tryX;
+        } else if (isOnGround) {
+          // Check 1-block auto step-up for X
+          const checkX = Math.floor(tryX + (inputX > 0 ? pRadius : -pRadius));
+          const sampleZ = Math.floor(player.z);
+          const hasFeetBlock = blocksMap.has(`${checkX},${currentFeetY},${sampleZ}`);
+          const hasHeadBlock = blocksMap.has(`${checkX},${currentFeetY + 1},${sampleZ}`);
+          const hasAboveHead = blocksMap.has(`${checkX},${currentFeetY + 2},${sampleZ}`);
+
+          if (hasFeetBlock && !hasHeadBlock && !hasAboveHead) {
+            player.y = currentFeetY + 1.0;
+            player.x = tryX;
+            player.vy = 0;
+          }
+        }
+
+        // Test Z Movement & Wall Collisions (Independent for smooth wall sliding)
+        let collideZ = false;
+        if (Math.abs(inputZ) > 0.0001) {
+          const checkZ = Math.floor(tryZ + (inputZ > 0 ? pRadius : -pRadius));
+          for (const ox of [-pRadius, 0, pRadius]) {
+            const sampleX = Math.floor(player.x + ox);
+            for (let y = currentFeetY; y <= headY; y++) {
+              if (blocksMap.has(`${sampleX},${y},${checkZ}`)) {
+                collideZ = true;
+                break;
+              }
+            }
+            if (collideZ) break;
+          }
+        }
+
+        if (!collideZ) {
+          player.z = tryZ;
+        } else if (isOnGround) {
+          // Check 1-block auto step-up for Z
+          const checkZ = Math.floor(tryZ + (inputZ > 0 ? pRadius : -pRadius));
+          const sampleX = Math.floor(player.x);
+          const hasFeetBlock = blocksMap.has(`${sampleX},${currentFeetY},${checkZ}`);
+          const hasHeadBlock = blocksMap.has(`${sampleX},${currentFeetY + 1},${checkZ}`);
+          const hasAboveHead = blocksMap.has(`${sampleX},${currentFeetY + 2},${checkZ}`);
+
+          if (hasFeetBlock && !hasHeadBlock && !hasAboveHead) {
+            player.y = currentFeetY + 1.0;
+            player.z = tryZ;
+            player.vy = 0;
+          }
         }
 
         // Footstep Sound Trigger when walking on ground
@@ -1580,6 +1666,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('wheel', handleWheel);
       renderer.domElement.removeEventListener('mousedown', handleMouseDown);

@@ -3,7 +3,8 @@ import { BlockType } from '../types';
 
 export type TextureMode = 'vanilla' | 'realistic' | 'faithful';
 
-const textureCache = new Map<string, THREE.CanvasTexture>();
+const textureLoader = new THREE.TextureLoader();
+const textureCache = new Map<string, THREE.Texture>();
 const blockFaceCache = new Map<string, any>();
 
 /**
@@ -31,15 +32,13 @@ export function createPixelTexture(
 }
 
 /**
- * Generates high-quality procedural pixel textures matching Minecraft 1.21.4 color palettes
+ * Generates high-quality procedural pixel textures matching Minecraft 1.21.4 color palettes as immediate fallback
  */
 function generateProceduralTexture(type: string): THREE.CanvasTexture {
   const size = 16;
-  if (textureCache.has(type)) return textureCache.get(type)!;
-
-  const tex = createPixelTexture(size, (ctx, s) => {
+  return createPixelTexture(size, (ctx, s) => {
     // 1. Grass Top (Lush Vibrant Minecraft Plains Green)
-    if (type === 'grass_top') {
+    if (type === 'grass_top' || type.includes('grass_block_top')) {
       ctx.fillStyle = '#55ab2f';
       ctx.fillRect(0, 0, s, s);
       const greens = ['#62be36', '#489c25', '#3d861e', '#6ed140'];
@@ -48,9 +47,8 @@ function generateProceduralTexture(type: string): THREE.CanvasTexture {
         ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
       }
     }
-    // 2. Grass Side (Dirt base with lush green overhang)
-    else if (type === 'grass_side') {
-      // Dirt base
+    // 2. Grass Side
+    else if (type === 'grass_side' || type.includes('grass_block_side')) {
       ctx.fillStyle = '#866043';
       ctx.fillRect(0, 0, s, s);
       const dirtColors = ['#735136', '#9c7252', '#5e4028'];
@@ -58,7 +56,6 @@ function generateProceduralTexture(type: string): THREE.CanvasTexture {
         ctx.fillStyle = dirtColors[Math.floor(Math.random() * dirtColors.length)];
         ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
       }
-      // Top overhang green grass trim
       ctx.fillStyle = '#55ab2f';
       ctx.fillRect(0, 0, s, 3);
       for (let x = 0; x < s; x++) {
@@ -76,7 +73,7 @@ function generateProceduralTexture(type: string): THREE.CanvasTexture {
         ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
       }
     }
-    // 4. Leaves (Vibrant Lush Green foliage)
+    // 4. Leaves (Vibrant Green)
     else if (type.includes('leaves') || type.includes('vine') || type.includes('bush') || type.includes('sapling')) {
       if (type.includes('cherry')) {
         ctx.fillStyle = '#ffb7c5';
@@ -122,9 +119,9 @@ function generateProceduralTexture(type: string): THREE.CanvasTexture {
         ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
       }
     }
-    // 7. Planks (Wood)
+    // 7. Planks
     else if (type.includes('plank') || type.includes('slab') || type.includes('stair') || type.includes('fence')) {
-      let baseColor = '#b08b52'; // Oak default
+      let baseColor = '#b08b52';
       if (type.includes('spruce')) baseColor = '#6d4c33';
       else if (type.includes('birch')) baseColor = '#d7c297';
       else if (type.includes('jungle')) baseColor = '#a07252';
@@ -142,7 +139,7 @@ function generateProceduralTexture(type: string): THREE.CanvasTexture {
       ctx.fillRect(0, 11, s, 1);
       ctx.fillRect(0, 15, s, 1);
     }
-    // 8. Logs (Side)
+    // 8. Logs
     else if (type.endsWith('_log') || type.endsWith('_stem') || type.endsWith('_wood')) {
       ctx.fillStyle = '#6e4f29';
       ctx.fillRect(0, 0, s, s);
@@ -164,147 +161,16 @@ function generateProceduralTexture(type: string): THREE.CanvasTexture {
       ctx.strokeRect(2, 2, 12, 12);
       ctx.strokeRect(5, 5, 6, 6);
     }
-    // 10. Ores
-    else if (type.includes('ore')) {
-      ctx.fillStyle = type.includes('deepslate') ? '#36363c' : '#7d7d7d';
-      ctx.fillRect(0, 0, s, s);
-      for (let i = 0; i < 40; i++) {
-        ctx.fillStyle = type.includes('deepslate') ? '#252529' : '#616161';
-        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
-      }
-      // Crystals
-      let gemColor = '#38bdf8'; // Diamond
-      if (type.includes('coal')) gemColor = '#222222';
-      else if (type.includes('iron')) gemColor = '#d1a384';
-      else if (type.includes('gold')) gemColor = '#facc15';
-      else if (type.includes('copper')) gemColor = '#e07a5f';
-      else if (type.includes('emerald')) gemColor = '#22c55e';
-      else if (type.includes('lapis')) gemColor = '#2563eb';
-      else if (type.includes('redstone')) gemColor = '#ef4444';
-
-      ctx.fillStyle = gemColor;
-      ctx.fillRect(3, 4, 3, 3);
-      ctx.fillRect(10, 3, 3, 2);
-      ctx.fillRect(6, 10, 3, 3);
-      ctx.fillRect(11, 11, 2, 3);
-    }
-    // 11. Crafting Table Top
-    else if (type === 'crafting_table_top') {
-      ctx.fillStyle = '#9c6e39';
-      ctx.fillRect(0, 0, s, s);
-      ctx.fillStyle = '#65421d';
-      ctx.fillRect(3, 3, 10, 10);
-      ctx.strokeStyle = '#c49a5b';
-      ctx.strokeRect(3, 3, 10, 10);
-    }
-    // 12. Crafting Table Side
-    else if (type === 'crafting_table_side') {
-      ctx.fillStyle = '#9c6e39';
-      ctx.fillRect(0, 0, s, s);
-      ctx.fillStyle = '#4a2f13';
-      ctx.fillRect(2, 5, 12, 8);
-    }
-    // 13. Furnace Front
-    else if (type === 'furnace_front') {
-      ctx.fillStyle = '#686868';
-      ctx.fillRect(0, 0, s, s);
-      ctx.fillStyle = '#1c1c1c';
-      ctx.fillRect(3, 6, 10, 8);
-      ctx.fillStyle = '#ea580c';
-      ctx.fillRect(5, 9, 6, 3);
-    }
-    // 14. Bookshelf Side
-    else if (type === 'bookshelf_side') {
-      ctx.fillStyle = '#bc9355';
-      ctx.fillRect(0, 0, s, s);
-      ctx.fillStyle = '#2b1d0c';
-      ctx.fillRect(2, 2, 12, 5);
-      ctx.fillRect(2, 9, 12, 5);
-      const bookColors = ['#dc2626', '#2563eb', '#16a34a', '#ca8a04', '#9333ea'];
-      for (let i = 0; i < 5; i++) {
-        ctx.fillStyle = bookColors[i % bookColors.length];
-        ctx.fillRect(3 + i * 2, 3, 2, 4);
-        ctx.fillRect(3 + i * 2, 10, 2, 4);
-      }
-    }
-    // 15. TNT Side
-    else if (type === 'tnt_side') {
-      ctx.fillStyle = '#dc2626';
-      ctx.fillRect(0, 0, s, s);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 5, s, 6);
-      ctx.fillStyle = '#000000';
-      ctx.font = 'bold 5px monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('TNT', 8, 8);
-    }
-    // 16. Water / Lava / Obsidian / Bedrock / Glass / Bricks / Sand / Wool
-    else if (type.includes('water')) {
-      ctx.fillStyle = '#2563eb';
-      ctx.fillRect(0, 0, s, s);
-      ctx.fillStyle = '#60a5fa';
-      for (let i = 0; i < 15; i++) {
-        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 2, 1);
-      }
-    } else if (type.includes('lava')) {
-      ctx.fillStyle = '#c2410c';
-      ctx.fillRect(0, 0, s, s);
-      ctx.fillStyle = '#f97316';
-      for (let i = 0; i < 20; i++) {
-        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 2, 2);
-      }
-    } else if (type.includes('obsidian')) {
-      ctx.fillStyle = '#120b1f';
-      ctx.fillRect(0, 0, s, s);
-      ctx.fillStyle = '#3c1d63';
-      for (let i = 0; i < 25; i++) {
-        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 2, 2);
-      }
-    } else if (type.includes('bedrock')) {
-      ctx.fillStyle = '#222222';
-      ctx.fillRect(0, 0, s, s);
-      ctx.fillStyle = '#444444';
-      for (let i = 0; i < 40; i++) {
-        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
-      }
-    } else if (type.includes('glass')) {
-      ctx.clearRect(0, 0, s, s);
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(0, 0, s, s);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-      ctx.fillRect(3, 3, 2, 2);
-      ctx.fillRect(11, 11, 2, 2);
-    } else if (type.includes('brick')) {
-      ctx.fillStyle = '#9e4a38';
-      ctx.fillRect(0, 0, s, s);
-      ctx.fillStyle = '#d1c7be';
-      ctx.fillRect(0, 3, s, 1);
-      ctx.fillRect(0, 7, s, 1);
-      ctx.fillRect(0, 11, s, 1);
-      ctx.fillRect(0, 15, s, 1);
-      ctx.fillRect(8, 0, 1, 3);
-      ctx.fillRect(4, 4, 1, 3);
-      ctx.fillRect(12, 8, 1, 3);
-    } else if (type.includes('sand')) {
-      ctx.fillStyle = '#ded29d';
-      ctx.fillRect(0, 0, s, s);
-      ctx.fillStyle = '#ccbf8c';
-      for (let i = 0; i < 35; i++) {
-        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
-      }
-    } else {
-      // Dynamic General Fallback color based on block name string
+    // Default Fallback
+    else {
       let color = '#7d7d7d';
       if (type.includes('grass')) color = '#55ab2f';
       else if (type.includes('dirt')) color = '#866043';
       else if (type.includes('wood') || type.includes('log') || type.includes('plank')) color = '#b08b52';
       else if (type.includes('nether') || type.includes('crimson')) color = '#6b1d1d';
-      else if (type.includes('quartz') || type.includes('diorite') || type.includes('snow')) color = '#e5e7eb';
-      else if (type.includes('gold') || type.includes('glowstone') || type.includes('yellow')) color = '#facc15';
-      else if (type.includes('iron') || type.includes('gray')) color = '#9ca3af';
-      else if (type.includes('diamond') || type.includes('cyan') || type.includes('blue')) color = '#38bdf8';
+      else if (type.includes('gold') || type.includes('glowstone')) color = '#facc15';
+      else if (type.includes('iron')) color = '#9ca3af';
+      else if (type.includes('diamond')) color = '#38bdf8';
 
       ctx.fillStyle = color;
       ctx.fillRect(0, 0, s, s);
@@ -313,9 +179,39 @@ function generateProceduralTexture(type: string): THREE.CanvasTexture {
       ctx.fillRect(0, 0, 1, s);
     }
   });
+}
 
-  textureCache.set(type, tex);
-  return tex;
+/**
+ * Loads official PNG texture from /textures/block/ with procedural fallback
+ */
+function loadBlockPngTexture(pngName: string): THREE.Texture {
+  if (textureCache.has(pngName)) return textureCache.get(pngName)!;
+
+  const fallback = generateProceduralTexture(pngName);
+  textureCache.set(pngName, fallback);
+
+  // Attempt async load of official downloaded PNG asset
+  textureLoader.load(
+    `/textures/block/${pngName}.png`,
+    (loadedTex) => {
+      loadedTex.magFilter = THREE.NearestFilter;
+      loadedTex.minFilter = THREE.NearestFilter;
+      loadedTex.generateMipmaps = false;
+      loadedTex.needsUpdate = true;
+
+      // Replace fallback with official loaded PNG texture
+      textureCache.set(pngName, loadedTex);
+
+      // Invalidate face cache so material receives official PNG texture
+      blockFaceCache.clear();
+    },
+    undefined,
+    () => {
+      // Fallback remains if PNG file not present
+    }
+  );
+
+  return fallback;
 }
 
 export function getBlockTextureObj(rawType: string): any {
@@ -327,47 +223,47 @@ export function getBlockTextureObj(rawType: string): any {
 
   // Grass Block
   if (type === 'grass' || type === 'grass_block') {
-    const top = generateProceduralTexture('grass_top');
-    const side = generateProceduralTexture('grass_side');
-    const bottom = generateProceduralTexture('dirt');
+    const top = loadBlockPngTexture('grass_block_top');
+    const side = loadBlockPngTexture('grass_block_side');
+    const bottom = loadBlockPngTexture('dirt');
     result = { top, side, bottom };
   }
   // Logs & Stems
   else if (type.endsWith('_log') || type.endsWith('_stem') || type.endsWith('_wood')) {
-    const top = generateProceduralTexture('oak_log_top');
-    const side = generateProceduralTexture(type);
+    const top = loadBlockPngTexture(`${type}_top`);
+    const side = loadBlockPngTexture(type);
     result = { top, side, bottom: top };
   }
   // Crafting Table
   else if (type === 'crafting_table') {
-    const top = generateProceduralTexture('crafting_table_top');
-    const side = generateProceduralTexture('crafting_table_side');
-    const bottom = generateProceduralTexture('oak_planks');
+    const top = loadBlockPngTexture('crafting_table_top');
+    const side = loadBlockPngTexture('crafting_table_side');
+    const bottom = loadBlockPngTexture('oak_planks');
     result = { top, side, bottom };
   }
   // Furnace
   else if (type === 'furnace') {
-    const top = generateProceduralTexture('stone');
-    const side = generateProceduralTexture('furnace_front');
-    const bottom = generateProceduralTexture('stone');
+    const top = loadBlockPngTexture('furnace_top');
+    const side = loadBlockPngTexture('furnace_front');
+    const bottom = loadBlockPngTexture('stone');
     result = { top, side, bottom };
   }
   // Bookshelf
   else if (type === 'bookshelf') {
-    const top = generateProceduralTexture('oak_planks');
-    const side = generateProceduralTexture('bookshelf_side');
+    const top = loadBlockPngTexture('oak_planks');
+    const side = loadBlockPngTexture('bookshelf');
     result = { top, side, bottom: top };
   }
   // TNT
   else if (type === 'tnt') {
-    const top = generateProceduralTexture('wool');
-    const side = generateProceduralTexture('tnt_side');
-    const bottom = generateProceduralTexture('wool');
+    const top = loadBlockPngTexture('tnt_top');
+    const side = loadBlockPngTexture('tnt_side');
+    const bottom = loadBlockPngTexture('tnt_bottom');
     result = { top, side, bottom };
   }
   // All other single-texture blocks
   else {
-    result = generateProceduralTexture(type);
+    result = loadBlockPngTexture(type);
   }
 
   blockFaceCache.set(type, result);
@@ -386,7 +282,6 @@ let currentLoadedMode: TextureMode | null = null;
 
 export function initTextures(mode: TextureMode = 'realistic') {
   currentLoadedMode = mode;
-  // Pre-prime common block textures
   const common = [
     'stone', 'dirt', 'grass', 'grass_block', 'cobblestone', 'oak_planks',
     'oak_log', 'oak_leaves', 'glass', 'water', 'bedrock', 'sand',

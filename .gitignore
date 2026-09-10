@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+.runtime_assets
+public/textures
+public/sounds
+public/sounds.json
+temp_mc
+client.jar
