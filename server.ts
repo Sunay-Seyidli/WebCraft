@@ -470,6 +470,7 @@ async function startServer() {
       let bot: any = null;
       let isCleanedUp = false;
       let isTransferring = false;
+      let reconnectAttempts = 0;
       let entitySyncInterval: any = null;
       let lastPlayerChunkX = 999999;
     let lastPlayerChunkZ = 999999;
@@ -550,9 +551,19 @@ async function startServer() {
           skipValidation: true,
         });
 
-        // Setup Velocity Transfer listeners when possible
+        // Setup Velocity Transfer listeners and socket resilience when possible
         const setupTransferListener = () => {
           if (bot && bot._client) {
+            bot._client.on("error", (err: any) => {
+              if (isTransferring) return;
+              console.warn("[MC Bridge Client Socket Error]:", err?.message || err);
+            });
+            if (bot._client.socket) {
+              bot._client.socket.on("error", (err: any) => {
+                if (isTransferring) return;
+                console.warn("[MC Bridge TCP Socket Error]:", err?.message || err);
+              });
+            }
             bot._client.on("transfer", (packet: any) => {
               console.log("[MC Bridge] Velocity/Server transfer packet received:", packet);
               handleTransfer(packet.host, packet.port);
@@ -604,6 +615,41 @@ async function startServer() {
           );
         }
         sendChatMessage("Sistem", `Sunucuya ${bot.username} olarak giriş yapıldı!`, true);
+      });
+
+      bot.on("respawn", () => {
+        console.log(`[MC Bridge] Velocity/Bungeecord respawn / sub-server switch detected`);
+        sentChunks.clear();
+        lastPlayerChunkX = 999999;
+        lastPlayerChunkZ = 999999;
+
+        sendChatMessage("Sistem", `Velocity Proxy: Yeni sunucu alanına aktarıldınız! Dünyalar yükleniyor...`, true);
+
+        if (ws.readyState === WebSocket.OPEN && bot.entity) {
+          const pos = bot.entity.position;
+          ws.send(
+            JSON.stringify({
+              type: "spawn",
+              x: pos.x,
+              y: pos.y,
+              z: pos.z,
+              yaw: bot.entity.yaw ?? 0,
+              pitch: bot.entity.pitch ?? 0,
+              health: bot.health ?? 20,
+              food: bot.food ?? 20,
+              gameMode: bot.game?.gameMode ?? "survival",
+              dimension: bot.game?.dimension ?? "overworld",
+            })
+          );
+
+          setTimeout(() => {
+            if (bot && bot.entity) {
+              const pcx = Math.floor(bot.entity.position.x / 16);
+              const pcz = Math.floor(bot.entity.position.z / 16);
+              streamChunksAround(bot, ws, pcx, pcz, 2, sentChunks);
+            }
+          }, 300);
+        }
       });
 
       bot.on("spawn", () => {
@@ -960,18 +1006,32 @@ async function startServer() {
         if (isTransferring) return;
 
         // Detect if it looks like a velocity/bungeecord server transition or proxy lobby reconnect
+        const rLower = reasonStr.toLowerCase();
         const isProxyTransition = 
-          reasonStr.toLowerCase().includes("transfer") ||
-          reasonStr.toLowerCase().includes("switching") ||
-          reasonStr.toLowerCase().includes("fallback") ||
-          reasonStr.toLowerCase().includes("routing") ||
-          reasonStr.toLowerCase().includes("velocity") ||
-          reasonStr.toLowerCase().includes("bungee") ||
-          reasonStr.toLowerCase().includes("moving to");
+          rLower.includes("transfer") ||
+          rLower.includes("switching") ||
+          rLower.includes("fallback") ||
+          rLower.includes("routing") ||
+          rLower.includes("velocity") ||
+          rLower.includes("bungee") ||
+          rLower.includes("moving to") ||
+          rLower.includes("lobby") ||
+          rLower.includes("hub") ||
+          rLower.includes("reconnect") ||
+          rLower.includes("server closed") ||
+          rLower.includes("econnreset");
 
-        if (isProxyTransition) {
+        if (isProxyTransition && reconnectAttempts < 5) {
+          reconnectAttempts++;
           isTransferring = true;
-          sendChatMessage("Sistem", `Velocity Proxy geçişi algılandı: Yeniden bağlanılıyor...`, true);
+          sendChatMessage("Sistem", `Velocity Proxy geçişi algılandı: Otomatik yeniden bağlanılıyor (${reconnectAttempts}/5)...`, true);
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: "status",
+              status: "connecting",
+              message: `Velocity Proxy geçişi: Sunucuya yeniden bağlanılıyor (${reconnectAttempts}/5)...`
+            }));
+          }
           if (bot) {
             try { bot.quit(); } catch {}
             bot = null;
@@ -981,7 +1041,7 @@ async function startServer() {
           lastPlayerChunkZ = 999999;
           setTimeout(() => {
             connectBot(botHost, botPort); // Reconnect to proxy entry point
-          }, 2500);
+          }, 2000);
           return;
         }
 
@@ -996,12 +1056,21 @@ async function startServer() {
       });
 
       bot.on("error", (err: any) => {
-        console.error(`[MC Bridge error]:`, err.message);
+        if (isTransferring) return; // Suppress expected resets during server transfers
+        const errMsg = err?.message || "";
+        const isReset = err?.code === "ECONNRESET" || errMsg.includes("ECONNRESET") || errMsg.includes("read ECONNRESET");
+
+        const friendlyMsg = isReset
+          ? "Sunucu bağlantıyı sıfırladı (ECONNRESET). Velocity Proxy geçiş yapıyor olabilir."
+          : (errMsg || "Minecraft Protocol bağlantı hatası");
+
+        console.warn(`[MC Bridge error caught]:`, friendlyMsg);
+
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(
             JSON.stringify({
               type: "error",
-              message: err.message || "Minecraft Protocol bağlantı hatası",
+              message: friendlyMsg,
             })
           );
         }
@@ -1011,11 +1080,47 @@ async function startServer() {
         console.log(`[MC Bridge] Bot disconnected:`, reason);
         if (isTransferring) return;
 
+        const reasonText = cleanMinecraftText(reason);
+        const isReset = reasonText.includes("ECONNRESET") || reasonText.includes("socket closed");
+
+        // Auto-reconnect retry on unexpected proxy drop (up to 3 retries)
+        if (reconnectAttempts < 3 && !isCleanedUp) {
+          reconnectAttempts++;
+          isTransferring = true;
+          console.log(`[MC Bridge] Velocity Proxy unexpected drop. Auto-reconnecting attempt ${reconnectAttempts}/3...`);
+          sendChatMessage("Sistem", `Velocity Proxy bağlantısı tazeleniyor (${reconnectAttempts}/3)... Lütfen bekleyin.`, true);
+          
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: "status",
+              status: "connecting",
+              message: `Velocity Proxy bağlantısı tazeleniyor (${reconnectAttempts}/3)...`
+            }));
+          }
+
+          if (bot) {
+            try { bot.quit(); } catch {}
+            bot = null;
+          }
+          sentChunks.clear();
+          lastPlayerChunkX = 999999;
+          lastPlayerChunkZ = 999999;
+
+          setTimeout(() => {
+            connectBot(botHost, botPort);
+          }, 2000);
+          return;
+        }
+
+        const cleanReason = isReset
+          ? "Sunucu bağlantısı sıfırlandı (ECONNRESET)"
+          : (reasonText || "Sunucu bağlantısı kapandı");
+
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(
             JSON.stringify({
               type: "closed",
-              reason: cleanMinecraftText(reason) || "Sunucu bağlantısı kapandı",
+              reason: cleanReason,
             })
           );
         }
