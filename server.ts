@@ -283,8 +283,8 @@ function extractChunkColumnBlocks(bot: any, chunkStartX: number, chunkStartZ: nu
   const playerY = bot.entity ? Math.floor(bot.entity.position.y) : 64;
   const vec = new Vec3(0, 0, 0);
 
-  const startY = Math.min(256, Math.max(90, playerY + 36));
-  const bottomY = Math.max(-60, playerY - 45);
+  const startY = Math.min(256, Math.max(80, playerY + 28));
+  const bottomY = Math.max(-60, playerY - 32);
 
   for (let x = chunkStartX; x < chunkStartX + 16; x++) {
     for (let z = chunkStartZ; z < chunkStartZ + 16; z++) {
@@ -302,12 +302,12 @@ function extractChunkColumnBlocks(bot: any, chunkStartX: number, chunkStartZ: nu
 
         consecutiveSolid++;
 
-        // Surface blocks only: keep top 1 solid surface block layer (plus transparent/liquid/leaves)
+        // Surface blocks only: keep top solid surface block layer (plus transparent/liquid/leaves)
         if (consecutiveSolid <= 1 || b.transparent || b.name === "water" || b.name === "lava" || b.name === "glass" || b.name === "oak_leaves") {
           blocks.push({ x, y, z, type: b.name });
-        } else if (consecutiveSolid > 2) {
-          // deep solid block underneath - skip until next air gap
-          continue;
+        } else {
+          // Solid underground layer reached - immediately break column to save massive CPU cycles
+          break;
         }
       }
     }
@@ -339,7 +339,7 @@ function streamChunkColumn(
   }
 }
 
-// Helper function to stream all chunks in a radius around the player
+// Helper function to stream all chunks in a radius around the player (Staggered to eliminate server & client lag spikes)
 function streamChunksAround(
   bot: any,
   ws: WebSocket,
@@ -350,18 +350,31 @@ function streamChunksAround(
 ) {
   if (ws.readyState !== WebSocket.OPEN || !bot) return;
 
+  const chunksToStream: { cx: number; cz: number; distSq: number }[] = [];
   for (let dx = -chunkRadius; dx <= chunkRadius; dx++) {
     for (let dz = -chunkRadius; dz <= chunkRadius; dz++) {
       const cx = playerChunkX + dx;
       const cz = playerChunkZ + dz;
       const key = `${cx},${cz}`;
       if (sentChunks && sentChunks.has(key)) continue;
+      chunksToStream.push({ cx, cz, distSq: dx * dx + dz * dz });
+    }
+  }
 
+  // Sort nearest first so the player's immediate surroundings appear instantly
+  chunksToStream.sort((a, b) => a.distSq - b.distSq);
+
+  let idx = 0;
+  const processNextChunk = () => {
+    if (ws.readyState !== WebSocket.OPEN || !bot || idx >= chunksToStream.length) return;
+    const { cx, cz } = chunksToStream[idx++];
+    const key = `${cx},${cz}`;
+    if (!sentChunks || !sentChunks.has(key)) {
+      if (sentChunks) sentChunks.add(key);
       const chunkStartX = cx * 16;
       const chunkStartZ = cz * 16;
       const blocks = extractChunkColumnBlocks(bot, chunkStartX, chunkStartZ);
       if (blocks.length > 0) {
-        if (sentChunks) sentChunks.add(key);
         ws.send(
           JSON.stringify({
             type: "blocks",
@@ -373,7 +386,13 @@ function streamChunksAround(
         );
       }
     }
-  }
+    // Stagger chunks across ticks (15ms) to prevent freezing Node.js event loop
+    if (idx < chunksToStream.length) {
+      setTimeout(processNextChunk, 15);
+    }
+  };
+
+  processNextChunk();
 }
 
 async function startServer() {
@@ -1048,8 +1067,22 @@ async function startServer() {
         }
       });
 
+      const entityMoveThrottles = new Map<number, number>();
+
       bot.on("entityMoved", (entity: any) => {
         if (!entity || !bot.entity || entity.id === bot.entity.id) return;
+        // Don't send distant entity movements
+        if (entity.position && bot.entity.position) {
+          const dx = entity.position.x - bot.entity.position.x;
+          const dz = entity.position.z - bot.entity.position.z;
+          if (dx * dx + dz * dz > 36 * 36) return;
+        }
+        // Throttle to max 16 updates/sec per entity
+        const now = Date.now();
+        const last = entityMoveThrottles.get(entity.id) || 0;
+        if (now - last < 60) return;
+        entityMoveThrottles.set(entity.id, now);
+
         if (ws.readyState === WebSocket.OPEN && entity.position) {
           ws.send(
             JSON.stringify({
