@@ -68,9 +68,9 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
   // Form states for adding a server
   const [newServerName, setNewServerName] = useState('Minecraft Sunucum');
   const [newServerAddress, setNewServerAddress] = useState('');
-  const [newServerProxy, setNewServerProxy] = useState('auto');
+  const [newServerProxy, setNewServerProxy] = useState('direct');
   const [directAddress, setDirectAddress] = useState('localhost:25565');
-  const [directProxy, setDirectProxy] = useState('auto');
+  const [directProxy, setDirectProxy] = useState('direct');
 
   // Ping a specific server (including custom SOCKS5 proxy)
   const pingServer = async (srv: ServerInfo): Promise<ServerInfo> => {
@@ -442,20 +442,20 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
 
             <div className="flex flex-col gap-1">
               <label className="text-cyan-300 text-base sm:text-lg font-bold flex items-center gap-1.5">
-                🛡️ SOCKS5 Proxy Ayarı (IP:Port):
+                🛡️ SOCKS5 Proxy Ayarı (Önerilen: direct):
               </label>
               <input
                 type="text"
                 value={newServerProxy}
                 onChange={(e) => setNewServerProxy(e.target.value)}
                 className="bg-black border-2 border-cyan-600/80 px-3 py-2 text-xl sm:text-2xl text-cyan-200 outline-none focus:border-cyan-400 font-mono rounded"
-                placeholder="auto veya 185.220.101.5:1080"
+                placeholder="direct, auto veya ip:port"
               />
-              <span className="text-xs text-gray-400">
-                • <span className="text-cyan-300 font-bold">socks5</span> kullanılması zorunludur (Minecraft ham TCP paketleri gönderir).
+              <span className="text-xs text-emerald-300 font-bold">
+                • En düşük ping için 'direct' (Doğrudan) yazın! Almanya sunucularına 5ms-20ms ile bağlanır.
               </span>
               <span className="text-xs text-amber-300">
-                • Ping bu proxy üzerinden ölçülecektir. Hızlı sunucu için 'auto' bırakabilirsiniz.
+                • 'auto' veya genel proxy'ler çok yavaştır (500ms+), paket kaybından dolayı oyundan atabilir.
               </span>
             </div>
 

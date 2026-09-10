@@ -871,14 +871,6 @@ async function startServer() {
       // ==========================================
       // FULL CHAT & MESSAGE SYSTEM
       // ==========================================
-      bot.on("chat", (author: string, text: string) => {
-        sendChatMessage(author, text);
-      });
-
-      bot.on("messagestr", (msg: string, pos: string) => {
-        sendChatMessage(pos === "game_info" ? "Eylem" : "Sunucu", msg, pos === "system");
-      });
-
       bot.on("message", (jsonMsg: any, pos: string) => {
         const clean = cleanMinecraftText(jsonMsg);
         if (clean) {

@@ -1043,7 +1043,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               setPing(rtt + data.serverPing);
             } else if (data.type === 'tabList') {
               if (Array.isArray(data.players)) {
-                setTabList(data.players);
+                setTabList(data.players.filter((p: any) => p && typeof p.username === 'string'));
               }
             } else if (data.type === 'scoreboard') {
               setScoreboard({
@@ -1412,7 +1412,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         candidates = commands.filter(c => c.toLowerCase().startsWith(lastWord.toLowerCase()));
       } else {
         // Player names autocomplete from tabList
-        const playerNames = tabList.map(p => p.username || '');
+        const playerNames = tabList.filter(p => p && p.username).map(p => p.username || '');
         candidates = playerNames.filter(name => name.toLowerCase().startsWith(lastWord.toLowerCase()));
       }
 
@@ -1718,9 +1718,11 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
             {messages.slice(-60).map((m) => (
               <div key={m.id} className="leading-tight break-words">
                 <span className="text-gray-400 text-xs">[{m.time}] </span>
-                <span className={m.isSystem ? 'text-yellow-400 font-bold' : 'text-emerald-300 font-bold'}>
-                  {m.sender}:{' '}
-                </span>
+                {m.sender !== 'Sunucu' && m.sender !== 'System' && m.sender !== 'Sistem' && (
+                  <span className={m.isSystem ? 'text-yellow-400 font-bold' : 'text-emerald-300 font-bold'}>
+                    {m.sender}:{' '}
+                  </span>
+                )}
                 <span className="text-white">{m.text}</span>
               </div>
             ))}
@@ -1772,9 +1774,11 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
             {messages.slice(chatOpen ? -80 : -8).map((m) => (
               <div key={m.id} className="drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] leading-tight break-words">
                 <span className="text-gray-400 text-xs">[{m.time}] </span>
-                <span className={m.isSystem ? 'text-yellow-400 font-bold' : 'text-emerald-300 font-bold'}>
-                  {m.sender}:{' '}
-                </span>
+                {m.sender !== 'Sunucu' && m.sender !== 'System' && m.sender !== 'Sistem' && (
+                  <span className={m.isSystem ? 'text-yellow-400 font-bold' : 'text-emerald-300 font-bold'}>
+                    {m.sender}:{' '}
+                  </span>
+                )}
                 <span className="text-white">{m.text}</span>
               </div>
             ))}
@@ -2259,12 +2263,13 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                 {tabList.map((player: any, idx: number) => {
+                  if (!player) return null;
                   const pingVal = typeof player.ping === 'number' ? player.ping : 0;
                   const pingColor = pingVal < 80 ? 'text-green-400' : pingVal < 180 ? 'text-yellow-400' : 'text-red-500';
                   return (
                     <div key={idx} className="bg-white/5 border border-white/10 px-2 py-1.5 rounded flex items-center justify-between text-xs sm:text-sm hover:bg-white/10 transition-colors">
                       <span className="truncate font-bold text-emerald-300 flex items-center gap-1">
-                        👤 {player.username}
+                        👤 {player.username || 'Oyuncu'}
                       </span>
                       <span className={`text-[10px] font-bold font-mono ${pingColor}`}>
                         📶 {pingVal}ms
