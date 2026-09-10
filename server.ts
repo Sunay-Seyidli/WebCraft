@@ -23,23 +23,24 @@ function cleanMinecraftText(raw: any): string {
           // not JSON, continue
         }
       }
-      return trimmed.replace(/§[0-9a-fk-or]/gi, "").trim();
+      return trimmed.replace(/§[0-9a-fk-orA-Z]/gi, "").trim();
     }
     if (typeof raw === "number" || typeof raw === "boolean") {
       return String(raw);
+    }
+    if (Array.isArray(raw)) {
+      return raw.map(item => cleanMinecraftText(item)).join("").trim();
     }
     // Mineflayer ChatMessage instance support
     if (typeof raw.toString === "function" && raw.toString !== Object.prototype.toString) {
       const str = raw.toString();
       if (str && typeof str === "string" && !str.startsWith("[object ")) {
-        return str.replace(/§[0-9a-fk-or]/gi, "").trim();
+        return str.replace(/§[0-9a-fk-orA-Z]/gi, "").trim();
       }
     }
     let result = "";
-    if (raw.text) result += raw.text;
-    if (raw.translate) {
-      result += raw.translate;
-    }
+    if (raw.text != null) result += String(raw.text);
+    if (raw.translate != null) result += String(raw.translate);
     if (Array.isArray(raw.extra)) {
       for (const item of raw.extra) {
         result += cleanMinecraftText(item);
@@ -59,7 +60,23 @@ function cleanMinecraftText(raw: any): string {
     if (raw.body && raw.body.content != null) {
       result += cleanMinecraftText(raw.body.content);
     }
-    return result.replace(/§[0-9a-fk-or]/gi, "").trim();
+
+    // Fallback recursive lookup if result is empty but it's an object
+    if (!result && typeof raw === "object") {
+      if (raw.text) return cleanMinecraftText(raw.text);
+      if (raw.name) return cleanMinecraftText(raw.name);
+      if (raw.displayName) return cleanMinecraftText(raw.displayName);
+      
+      const parts: string[] = [];
+      for (const k of Object.keys(raw)) {
+        if (typeof raw[k] === "string" && !raw[k].startsWith("[object")) {
+          parts.push(raw[k]);
+        }
+      }
+      if (parts.length > 0) return parts.join(" ");
+    }
+
+    return result.replace(/§[0-9a-fk-orA-Z]/gi, "").trim();
   } catch {
     return "";
   }
@@ -449,9 +466,12 @@ async function startServer() {
     // ==========================================
     // FULL MINECRAFT JAVA PROTOCOL CLIENT BRIDGE
     // ==========================================
-    let bot: any = null;
-    let isCleanedUp = false;
-    let lastPlayerChunkX = 999999;
+    try {
+      let bot: any = null;
+      let isCleanedUp = false;
+      let isTransferring = false;
+      let entitySyncInterval: any = null;
+      let lastPlayerChunkX = 999999;
     let lastPlayerChunkZ = 999999;
     const sentChunks = new Set<string>();
 
@@ -491,6 +511,7 @@ async function startServer() {
       if (isCleanedUp) return;
       isCleanedUp = true;
       console.log(`[MC Bridge] Cleaning up bot for ${host}:${port} (${username})`);
+      if (entitySyncInterval) clearInterval(entitySyncInterval);
       if (bot) {
         try {
           bot.quit();
@@ -504,25 +525,72 @@ async function startServer() {
     ws.on("close", cleanup);
     ws.on("error", cleanup);
 
-    try {
-      ws.send(
-        JSON.stringify({
-          type: "status",
-          status: "connecting",
-          message: `${host}:${port} sunucusuna Minecraft Java Protokolü ile bağlanılıyor...`,
-        })
-      );
+    function connectBot(botHost: string, botPort: number) {
+      if (isCleanedUp) return;
+      isTransferring = false;
+      if (entitySyncInterval) clearInterval(entitySyncInterval);
 
-      // Create full-featured Mineflayer bot
-      bot = mineflayer.createBot({
-        host,
-        port,
-        username,
-        auth: "offline",
-        checkTimeoutInterval: 45000,
-        hideErrors: false,
-        skipValidation: true,
-      });
+      try {
+        ws.send(
+          JSON.stringify({
+            type: "status",
+            status: "connecting",
+            message: `${botHost}:${botPort} sunucusuna Minecraft Java Protokolü ile bağlanılıyor...`,
+          })
+        );
+
+        // Create full-featured Mineflayer bot
+        bot = mineflayer.createBot({
+          host: botHost,
+          port: botPort,
+          username,
+          auth: "offline",
+          checkTimeoutInterval: 45000,
+          hideErrors: false,
+          skipValidation: true,
+        });
+
+        // Setup Velocity Transfer listeners when possible
+        const setupTransferListener = () => {
+          if (bot && bot._client) {
+            bot._client.on("transfer", (packet: any) => {
+              console.log("[MC Bridge] Velocity/Server transfer packet received:", packet);
+              handleTransfer(packet.host, packet.port);
+            });
+          }
+        };
+
+        bot.on("connect", setupTransferListener);
+        bot.on("login", setupTransferListener);
+
+        const handleTransfer = (newHost: string, newPort: number) => {
+          if (isTransferring) return;
+          isTransferring = true;
+          
+          console.log(`[MC Bridge] Velocity proxy redirect: transferring bot to ${newHost}:${newPort}`);
+          sendChatMessage("Sistem", `Velocity Proxy: Başka sunucuya aktarılıyorsunuz (${newHost}:${newPort})... Lütfen bekleyin.`, true);
+          
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: "status",
+              status: "connecting",
+              message: `Velocity Proxy: Başka sunucuya aktarılıyorsunuz (${newHost}:${newPort})... Lütfen bekleyin.`
+            }));
+          }
+
+          if (bot) {
+            try { bot.quit(); } catch {}
+            bot = null;
+          }
+
+          sentChunks.clear();
+          lastPlayerChunkX = 999999;
+          lastPlayerChunkZ = 999999;
+
+          setTimeout(() => {
+            connectBot(newHost, newPort);
+          }, 1500);
+        };
 
       bot.on("login", () => {
         console.log(`[MC Bridge] Bot logged into ${host}:${port} as ${bot.username}`);
@@ -886,9 +954,38 @@ async function startServer() {
       bot.on("heldItemChanged", handleInventoryChange);
 
       bot.on("kicked", (reason: any) => {
-        console.warn(`[MC Bridge] Bot kicked:`, reason);
+        const reasonStr = cleanMinecraftText(reason) || "Sunucudan atıldınız";
+        console.warn(`[MC Bridge] Bot kicked:`, reasonStr);
+
+        if (isTransferring) return;
+
+        // Detect if it looks like a velocity/bungeecord server transition or proxy lobby reconnect
+        const isProxyTransition = 
+          reasonStr.toLowerCase().includes("transfer") ||
+          reasonStr.toLowerCase().includes("switching") ||
+          reasonStr.toLowerCase().includes("fallback") ||
+          reasonStr.toLowerCase().includes("routing") ||
+          reasonStr.toLowerCase().includes("velocity") ||
+          reasonStr.toLowerCase().includes("bungee") ||
+          reasonStr.toLowerCase().includes("moving to");
+
+        if (isProxyTransition) {
+          isTransferring = true;
+          sendChatMessage("Sistem", `Velocity Proxy geçişi algılandı: Yeniden bağlanılıyor...`, true);
+          if (bot) {
+            try { bot.quit(); } catch {}
+            bot = null;
+          }
+          sentChunks.clear();
+          lastPlayerChunkX = 999999;
+          lastPlayerChunkZ = 999999;
+          setTimeout(() => {
+            connectBot(botHost, botPort); // Reconnect to proxy entry point
+          }, 2500);
+          return;
+        }
+
         if (ws.readyState === WebSocket.OPEN) {
-          const reasonStr = cleanMinecraftText(reason) || "Sunucudan atıldınız";
           ws.send(
             JSON.stringify({
               type: "kicked",
@@ -912,6 +1009,8 @@ async function startServer() {
 
       bot.on("end", (reason: any) => {
         console.log(`[MC Bridge] Bot disconnected:`, reason);
+        if (isTransferring) return;
+
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(
             JSON.stringify({
@@ -921,6 +1020,17 @@ async function startServer() {
           );
         }
       });
+
+    } catch (err: any) {
+      console.error("[MC Bridge connect error]:", err);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "error", message: err.message || "Bot bağlantısı başlatılamadı." }));
+      }
+    }
+  }
+
+  // Trigger the initial connection
+  connectBot(host, port);
 
       // ==========================================
       // BROWSER CLIENT PACKETS HANDLING
@@ -1100,12 +1210,12 @@ async function startServer() {
             const curChunkZ = Math.floor(bot.entity.position.z / 16);
             streamChunksAround(bot, ws, curChunkX, curChunkZ, 2, sentChunks);
           }
-        } catch {
+        } catch (e: any) {
           // ignore invalid JSON
         }
       });
     } catch (err: any) {
-      console.error(`[MC Bridge] Failed to init bot:`, err);
+      console.error(`[MC Bridge] Protocol error:`, err);
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "error", message: err.message }));
       }

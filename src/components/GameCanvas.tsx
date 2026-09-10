@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { WorldInfo, ServerInfo, GameSettings, ChatMessage, BlockType, InventoryItem, MinecraftEntityData } from '../types';
 import { soundManager } from '../utils/audio';
@@ -109,6 +109,33 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   const [health, setHealth] = useState(20);
   const [hunger, setHunger] = useState(20);
   const [fps, setFps] = useState(60);
+
+  // Live customizable settings and diagnostics
+  const [activeSettings, setActiveSettings] = useState<GameSettings>(() => {
+    try {
+      const saved = localStorage.getItem('mc_client_settings');
+      if (saved) {
+        return {
+          showScoreboard: true,
+          showPing: true,
+          ...settings,
+          ...JSON.parse(saved)
+        };
+      }
+    } catch {}
+    return {
+      showScoreboard: true,
+      showPing: true,
+      ...settings,
+    };
+  });
+  const [ping, setPing] = useState(0);
+  const [tabList, setTabList] = useState<any[]>([]);
+  const [scoreboard, setScoreboard] = useState<{ title: string; items: { name: string; score: number }[] } | null>(null);
+  const [tabListOpen, setTabListOpen] = useState(false);
+  const [menuScreen, setMenuScreen] = useState<'main' | 'settings'>('main');
+
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const [playerPos, setPlayerPos] = useState({ x: '0.0', y: '64.0', z: '0.0' });
   const [targetedBlock, setTargetedBlock] = useState<TargetedBlockData | null>(null);
   const [disconnectedReason, setDisconnectedReason] = useState<string | null>(null);
@@ -125,7 +152,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
   // Check if touch controls should be visible
   const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth < 1024);
-  const showTouchControls = settings.touchControls === 'enabled' || (settings.touchControls === 'auto' && isTouchDevice);
+  const showTouchControls = activeSettings.touchControls === 'enabled' || (activeSettings.touchControls === 'auto' && isTouchDevice);
 
   // Landscape vs Portrait detection for mobile optimization
   const [isPortrait, setIsPortrait] = useState(() => typeof window !== 'undefined' && window.innerHeight > window.innerWidth);
@@ -207,8 +234,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   };
 
   useEffect(() => {
-    // Initialize textures
-    initTextures(settings.texturePack || 'realistic');
+    // Initialize textures with the active user setting
+    initTextures(activeSettings.texturePack || 'realistic');
 
     if (!containerRef.current) return;
     const container = containerRef.current;
@@ -219,10 +246,11 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     scene.background = new THREE.Color(0x87ceeb); // Sky blue
     scene.fog = new THREE.FogExp2(0x87ceeb, 0.018);
 
-    const camera = new THREE.PerspectiveCamera(settings.fov, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const camera = new THREE.PerspectiveCamera(activeSettings.fov, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 15, 0);
+    cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: settings.graphics === 'fabulous' });
+    const renderer = new THREE.WebGLRenderer({ antialias: activeSettings.graphics === 'fabulous' });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
@@ -285,23 +313,38 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     const blocksMap = new Map<string, THREE.Mesh>();
     const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
 
+    // Material Cache: Shared materials across blocks to minimize WebGL state-changes and boost FPS to 60!
+    const materialCache = new Map<BlockType, THREE.Material | THREE.Material[]>();
+
     const getMaterialsForBlock = (type: BlockType): THREE.Material | THREE.Material[] => {
+      if (materialCache.has(type)) {
+        return materialCache.get(type)!;
+      }
+
       const tex = blockTextures[type];
       if (!tex) {
-        return new THREE.MeshLambertMaterial({ color: 0x888888 });
+        const fallbackMat = new THREE.MeshLambertMaterial({ color: 0x888888 });
+        materialCache.set(type, fallbackMat);
+        return fallbackMat;
       }
+
+      let mats: THREE.Material | THREE.Material[];
       if ('top' in tex) {
         const sideMat = new THREE.MeshLambertMaterial({ map: tex.side });
         const topMat = new THREE.MeshLambertMaterial({ map: tex.top });
         const botMat = new THREE.MeshLambertMaterial({ map: tex.bottom });
-        return [sideMat, sideMat, topMat, botMat, sideMat, sideMat];
+        mats = [sideMat, sideMat, topMat, botMat, sideMat, sideMat];
+      } else {
+        const isTransparent = type === 'glass' || type === 'water';
+        mats = new THREE.MeshLambertMaterial({
+          map: tex,
+          transparent: isTransparent,
+          opacity: type === 'water' ? 0.7 : type === 'glass' ? 0.85 : 1.0
+        });
       }
-      const isTransparent = type === 'glass' || type === 'water';
-      return new THREE.MeshLambertMaterial({
-        map: tex,
-        transparent: isTransparent,
-        opacity: type === 'water' ? 0.7 : type === 'glass' ? 0.85 : 1.0
-      });
+
+      materialCache.set(type, mats);
+      return mats;
     };
 
     const addBlockAt = (x: number, y: number, z: number, type: BlockType) => {
@@ -371,6 +414,10 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
     const handleKeyDown = (e: KeyboardEvent) => {
       keys[e.code] = true;
+      if (e.code === 'Tab') {
+        e.preventDefault();
+        setTabListOpen(true);
+      }
       if (e.code === 'KeyE' && !chatOpenRef.current) {
         setInventoryOpen((prev) => !prev);
       }
@@ -384,9 +431,16 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         setChatOpen(true);
       }
       if (e.code === 'Escape') {
-        if (chatOpenRef.current) setChatOpen(false);
-        else if (inventoryOpenRef.current) setInventoryOpen(false);
-        else setPaused((prev) => !prev);
+        if (chatOpenRef.current) {
+          setChatOpen(false);
+        } else if (inventoryOpenRef.current) {
+          setInventoryOpen(false);
+        } else {
+          setPaused((prev) => {
+            if (!prev) setMenuScreen('main'); // default screen when pausing
+            return !prev;
+          });
+        }
       }
       if (e.code.startsWith('Digit')) {
         const num = parseInt(e.code.replace('Digit', ''), 10);
@@ -398,6 +452,10 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
     const handleKeyUp = (e: KeyboardEvent) => {
       keys[e.code] = false;
+      if (e.code === 'Tab') {
+        e.preventDefault();
+        setTabListOpen(false);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -673,16 +731,25 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     renderer.domElement.addEventListener('touchmove', handleTouchMove, { passive: true });
     renderer.domElement.addEventListener('touchend', handleTouchEnd, { passive: true });
 
+    let pingInterval: any = null;
+
     // Connect WebSocket Minecraft Java Protocol Bridge if server is specified
     if (server) {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const chosenPlayerName = (settings.playerName?.trim() || localStorage.getItem('mc_player_username') || 'Steve').replace(/[^a-zA-Z0-9_]/g, '');
+      const chosenPlayerName = (activeSettings.playerName?.trim() || localStorage.getItem('mc_player_username') || 'Steve').replace(/[^a-zA-Z0-9_]/g, '');
       const wsUrl = `${wsProtocol}//${window.location.host}/ws-proxy?host=${encodeURIComponent(server.ip)}&port=${server.port}&username=${encodeURIComponent(chosenPlayerName || 'Steve')}&mode=protocol`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
         addChatMessage('Sistem', `Minecraft Java Protokol Köprüsü bağlandı: ${server.name} (${server.ip}:${server.port})`, true);
+        
+        // Start live round-trip latency (ping) diagnostic loop
+        pingInterval = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping', time: Date.now() }));
+          }
+        }, 2000);
       };
 
       ws.onmessage = (event) => {
@@ -825,6 +892,18 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                 }
                 setEntitiesCount(entitiesMapRef.current.size);
               }
+            } else if (data.type === 'pong') {
+              const rtt = Date.now() - data.clientTime;
+              setPing(rtt + data.serverPing);
+            } else if (data.type === 'tabList') {
+              if (Array.isArray(data.players)) {
+                setTabList(data.players);
+              }
+            } else if (data.type === 'scoreboard') {
+              setScoreboard({
+                title: data.title || 'SCOREBOARD',
+                items: data.items || []
+              });
             } else if (data.type === 'kicked') {
               const reasonText = data.reason || 'Sunucu tarafından oturum sonlandırıldı.';
               setServerStatusText(`Sunucudan atıldınız: ${reasonText}`);
@@ -871,6 +950,19 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         lastTime = now;
       }
 
+      // Dynamic Chunk Culling (Unloads distant blocks to maintain high FPS)
+      if (frameCount % 120 === 0) {
+        const limitDistSq = Math.pow(activeSettings.renderDistance * 16, 2);
+        const camPos = camera.position;
+        for (const [key, mesh] of blocksMap.entries()) {
+          if (mesh.position.distanceToSquared(camPos) > limitDistSq) {
+            scene.remove(mesh);
+            mesh.geometry.dispose();
+            blocksMap.delete(key);
+          }
+        }
+      }
+
       // Animate 3D Mobs, NPCs, and Players
       for (const entity of entitiesMapRef.current.values()) {
         updateEntityTick(entity, 0.016);
@@ -892,7 +984,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       }
 
       if (!pausedRef.current && !inventoryOpenRef.current && !chatOpenRef.current) {
-        const moveSpeed = player.speed;
+        // Boosted base speed (0.18) and added Sprinting speed boost (0.28) for super snappy controls!
+        const isSprinting = keys['ControlLeft'] || keys['ShiftLeft'] || keys['KeyR'];
+        const moveSpeed = isSprinting ? 0.28 : 0.18;
         let dx = 0;
         let dz = 0;
 
@@ -1047,6 +1141,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
     return () => {
       cancelAnimationFrame(animId);
+      if (pingInterval) clearInterval(pingInterval);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('mousemove', handleMouseMove);
@@ -1061,7 +1156,27 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       if (wsRef.current) wsRef.current.close();
       entitiesMapRef.current.clear();
     };
-  }, [settings.fov, settings.graphics, settings.texturePack, server, addChatMessage]);
+  }, [activeSettings.fov, activeSettings.graphics, activeSettings.texturePack, server, addChatMessage]);
+
+  const handleUpdateSetting = <K extends keyof GameSettings>(key: K, value: GameSettings[K]) => {
+    setActiveSettings(prev => {
+      const updated = { ...prev, [key]: value };
+      try {
+        localStorage.setItem('mc_client_settings', JSON.stringify(updated));
+      } catch {}
+
+      // Hot-apply settings in real-time
+      if (key === 'fov' && cameraRef.current) {
+        cameraRef.current.fov = Number(value);
+        cameraRef.current.updateProjectionMatrix();
+      }
+      if (key === 'volume') {
+        soundManager.setVolume(Number(value) / 100);
+      }
+
+      return updated;
+    });
+  };
 
   const handleSendChat = () => {
     const text = chatInput.trim();
@@ -1076,6 +1191,40 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
     setChatInput('');
     setChatOpen(false);
+  };
+
+  const handleChatTabAutocomplete = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Tab') {
+      e.preventDefault(); // prevent losing focus
+      soundManager.playClick();
+
+      const words = chatInput.split(' ');
+      if (words.length === 0) return;
+
+      const lastWord = words[words.length - 1];
+      if (!lastWord) return;
+
+      let candidates: string[] = [];
+
+      if (lastWord.startsWith('/')) {
+        // Minecraft commands autocomplete
+        const commands = [
+          '/gamemode', '/tp', '/spawn', '/help', '/op', '/deop', '/clear',
+          '/difficulty', '/gamerule', '/give', '/kill', '/list', '/say',
+          '/time', '/weather', '/whisper', '/msg', '/plugins', '/tps', '/ping'
+        ];
+        candidates = commands.filter(c => c.toLowerCase().startsWith(lastWord.toLowerCase()));
+      } else {
+        // Player names autocomplete from tabList
+        const playerNames = tabList.map(p => p.username || '');
+        candidates = playerNames.filter(name => name.toLowerCase().startsWith(lastWord.toLowerCase()));
+      }
+
+      if (candidates.length > 0) {
+        words[words.length - 1] = candidates[0];
+        setChatInput(words.join(' ') + ' ');
+      }
+    }
   };
 
   const handleRequestChunks = () => {
@@ -1163,8 +1312,11 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
       {/* HUD: FPS & Player Pos & Server Banner (Top Left) */}
       <div className="absolute top-2 left-2 text-white text-xs sm:text-sm bg-black/60 px-2.5 py-1.5 rounded border border-white/10 pointer-events-none z-20 max-w-[45vw] overflow-hidden">
-        <div className="text-green-400 font-bold truncate">MC 1.21.4 • {settings.texturePack?.toUpperCase() || 'REALISTIC'}</div>
-        <div className="truncate font-mono">FPS: {fps} | XYZ: {playerPos.x}/{playerPos.y}/{playerPos.z}</div>
+        <div className="text-green-400 font-bold truncate">MC 1.21.4 • {activeSettings.texturePack?.toUpperCase() || 'REALISTIC'}</div>
+        <div className="truncate font-mono">
+          FPS: {fps} | XYZ: {playerPos.x}/{playerPos.y}/{playerPos.z}
+          {activeSettings.showPing && server && ` | 📶 ${ping}ms`}
+        </div>
         <div className="text-emerald-300 text-[11px] truncate">
           🧱 Blok: {blocksCount.toLocaleString()} {server && `| 🧟 Canlı: ${entitiesCount}`}
         </div>
@@ -1178,13 +1330,24 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       {/* Top Right Buttons (Fixed Z-50, Never Covered) */}
       <div className="absolute top-2 right-2 flex items-center gap-1.5 z-50">
         {server && (
-          <button
-            onClick={handleRequestChunks}
-            className="h-9 sm:h-10 px-2.5 sm:px-3 bg-black/75 hover:bg-black/95 active:bg-emerald-950 border border-emerald-500 rounded text-emerald-300 text-xs sm:text-base flex items-center gap-1 shadow-md active:scale-95"
-            title="Chunkları Yenile"
-          >
-            🗺️ <span className="hidden sm:inline">Chunklar</span>
-          </button>
+          <>
+            <button
+              onClick={handleRequestChunks}
+              className="h-9 sm:h-10 px-2.5 sm:px-3 bg-black/75 hover:bg-black/95 active:bg-emerald-950 border border-emerald-500 rounded text-emerald-300 text-xs sm:text-base flex items-center gap-1 shadow-md active:scale-95"
+              title="Chunkları Yenile"
+            >
+              🗺️ <span className="hidden sm:inline">Chunklar</span>
+            </button>
+            <button
+              onClick={() => setTabListOpen((prev) => !prev)}
+              className={`h-9 sm:h-10 px-2.5 sm:px-3 border rounded text-white text-xs sm:text-base flex items-center gap-1 shadow-md active:scale-95 ${
+                tabListOpen ? 'bg-emerald-600 border-emerald-400' : 'bg-black/75 hover:bg-black/95 border-gray-500'
+              }`}
+              title="Oyuncu Listesi (TAB)"
+            >
+              👥 <span className="hidden sm:inline">Oyuncular</span>
+            </button>
+          </>
         )}
         <button
           onClick={() => setChatOpen((prev) => !prev)}
@@ -1375,7 +1538,11 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSendChat();
+                if (e.key === 'Enter') {
+                  handleSendChat();
+                } else if (e.key === 'Tab') {
+                  handleChatTabAutocomplete(e);
+                }
               }}
               placeholder="Mesaj veya /komut yazın..."
               className="flex-1 bg-gray-900 border border-yellow-400/80 px-3 py-2 text-white outline-none rounded text-base"
@@ -1430,6 +1597,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                     handleSendChat();
                   } else if (e.key === 'Escape') {
                     setChatOpen(false);
+                  } else if (e.key === 'Tab') {
+                    handleChatTabAutocomplete(e);
                   }
                 }}
                 placeholder="Mesaj veya /komut..."
@@ -1571,44 +1740,221 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                 ✕
               </button>
             </div>
-            <button
-              onClick={() => {
-                soundManager.playClick();
-                setPaused(false);
-              }}
-              className="py-2.5 sm:py-3 bg-[#4a7c34] hover:bg-[#5b9640] active:bg-[#3d6929] text-white border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-xl sm:text-2xl font-bold"
-            >
-              ▶ Oyuna Dön (Resume)
-            </button>
-            <button
-              onClick={() => {
-                soundManager.playClick();
-                setPaused(false);
-                setInventoryOpen(true);
-              }}
-              className="py-2.5 sm:py-3 bg-[#727272] hover:bg-[#858585] text-white border-2 border-t-[#b5b5b5] border-l-[#b5b5b5] border-b-[#3d3d3d] border-r-[#3d3d3d] text-xl sm:text-2xl font-bold"
-            >
-              🎒 Envanter (Inventory)
-            </button>
-            <button
-              onClick={() => {
-                soundManager.playClick();
-                handleRequestChunks();
-                setPaused(false);
-              }}
-              className="py-2.5 sm:py-3 bg-[#3b82f6] hover:bg-[#2563eb] text-white border-2 border-t-[#93c5fd] border-l-[#93c5fd] border-b-[#1e40af] border-r-[#1e40af] text-xl sm:text-2xl font-bold"
-            >
-              🔄 Chunkları Yenile
-            </button>
-            <button
-              onClick={() => {
-                soundManager.playClick();
-                onExit();
-              }}
-              className="py-2.5 sm:py-3 bg-[#a82020] hover:bg-[#c93030] text-white border-2 border-t-[#f87171] border-l-[#f87171] border-b-[#7f1d1d] border-r-[#7f1d1d] text-xl sm:text-2xl font-bold mt-1"
-            >
-              🚪 Ana Menüye Kaydet ve Çık
-            </button>
+            {menuScreen === 'main' ? (
+              <>
+                <button
+                  onClick={() => {
+                    soundManager.playClick();
+                    setPaused(false);
+                  }}
+                  className="py-2.5 sm:py-3 bg-[#4a7c34] hover:bg-[#5b9640] active:bg-[#3d6929] text-white border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-xl sm:text-2xl font-bold"
+                >
+                  ▶ Oyuna Dön (Resume)
+                </button>
+                <button
+                  onClick={() => {
+                    soundManager.playClick();
+                    setPaused(false);
+                    setInventoryOpen(true);
+                  }}
+                  className="py-2.5 sm:py-3 bg-[#727272] hover:bg-[#858585] text-white border-2 border-t-[#b5b5b5] border-l-[#b5b5b5] border-b-[#3d3d3d] border-r-[#3d3d3d] text-xl sm:text-2xl font-bold"
+                >
+                  🎒 Envanter (Inventory)
+                </button>
+                <button
+                  onClick={() => {
+                    soundManager.playClick();
+                    setMenuScreen('settings');
+                  }}
+                  className="py-2.5 sm:py-3 bg-[#eab308] hover:bg-[#ca8a04] text-black border-2 border-t-[#fef08a] border-l-[#fef08a] border-b-[#854d0e] border-r-[#854d0e] text-xl sm:text-2xl font-bold"
+                >
+                  🔧 Ayarlar (Settings)
+                </button>
+                <button
+                  onClick={() => {
+                    soundManager.playClick();
+                    handleRequestChunks();
+                    setPaused(false);
+                  }}
+                  className="py-2.5 sm:py-3 bg-[#3b82f6] hover:bg-[#2563eb] text-white border-2 border-t-[#93c5fd] border-l-[#93c5fd] border-b-[#1e40af] border-r-[#1e40af] text-xl sm:text-2xl font-bold"
+                >
+                  🔄 Chunkları Yenile
+                </button>
+                <button
+                  onClick={() => {
+                    soundManager.playClick();
+                    onExit();
+                  }}
+                  className="py-2.5 sm:py-3 bg-[#a82020] hover:bg-[#c93030] text-white border-2 border-t-[#f87171] border-l-[#f87171] border-b-[#7f1d1d] border-r-[#7f1d1d] text-xl sm:text-2xl font-bold mt-1"
+                >
+                  🚪 Ana Menüye Kaydet ve Çık
+                </button>
+              </>
+            ) : (
+              <div className="flex flex-col gap-3 text-white font-mono text-sm max-h-[75vh] overflow-y-auto pr-1">
+                <div className="text-center font-bold text-yellow-400 text-lg border-b border-gray-600 pb-1.5 mb-1.5">
+                  🔧 OYUN AYARLARI
+                </div>
+
+                {/* FOV Setting */}
+                <div className="flex flex-col gap-1">
+                  <div className="flex justify-between text-xs font-bold text-gray-300">
+                    <span>Bakış Açısı (FOV):</span>
+                    <span className="text-yellow-400">{activeSettings.fov}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="50"
+                    max="110"
+                    step="5"
+                    value={activeSettings.fov}
+                    onChange={(e) => handleUpdateSetting('fov', parseInt(e.target.value, 10))}
+                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-400"
+                  />
+                </div>
+
+                {/* Render Distance Setting */}
+                <div className="flex flex-col gap-1">
+                  <div className="flex justify-between text-xs font-bold text-gray-300">
+                    <span>Görüş Mesafesi (Render Distance):</span>
+                    <span className="text-yellow-400">{activeSettings.renderDistance} Chunk</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="2"
+                    max="16"
+                    step="1"
+                    value={activeSettings.renderDistance}
+                    onChange={(e) => handleUpdateSetting('renderDistance', parseInt(e.target.value, 10))}
+                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-400"
+                  />
+                </div>
+
+                {/* Volume Setting */}
+                <div className="flex flex-col gap-1">
+                  <div className="flex justify-between text-xs font-bold text-gray-300">
+                    <span>Ses Düzeyi (Volume):</span>
+                    <span className="text-yellow-400">%{activeSettings.volume}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={activeSettings.volume}
+                    onChange={(e) => handleUpdateSetting('volume', parseInt(e.target.value, 10))}
+                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-400"
+                  />
+                </div>
+
+                {/* Graphics Quality */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-bold text-gray-300">Grafik Kalitesi:</span>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(['fast', 'fancy', 'fabulous'] as const).map((g) => (
+                      <button
+                        key={g}
+                        onClick={() => {
+                          soundManager.playClick();
+                          handleUpdateSetting('graphics', g);
+                        }}
+                        className={`py-1 text-xs border rounded transition-colors uppercase font-bold ${
+                          activeSettings.graphics === g
+                            ? 'bg-yellow-500 text-black border-yellow-300'
+                            : 'bg-black/40 text-gray-400 border-gray-600 hover:bg-black/60'
+                        }`}
+                      >
+                        {g === 'fast' ? 'Hızlı' : g === 'fancy' ? 'Gerçekçi' : 'Şahane'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Texture Pack Selection */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-bold text-gray-300">Doku Paketi (Texture Pack):</span>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(['vanilla', 'realistic', 'faithful'] as const).map((pack) => (
+                      <button
+                        key={pack}
+                        onClick={() => {
+                          soundManager.playClick();
+                          handleUpdateSetting('texturePack', pack);
+                        }}
+                        className={`py-1 text-xs border rounded transition-colors uppercase font-bold ${
+                          activeSettings.texturePack === pack
+                            ? 'bg-yellow-500 text-black border-yellow-300'
+                            : 'bg-black/40 text-gray-400 border-gray-600 hover:bg-black/60'
+                        }`}
+                      >
+                        {pack}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Touch Controls Toggle */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-bold text-gray-300">Dokunmatik Kontroller:</span>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(['auto', 'enabled', 'disabled'] as const).map((tc) => (
+                      <button
+                        key={tc}
+                        onClick={() => {
+                          soundManager.playClick();
+                          handleUpdateSetting('touchControls', tc);
+                        }}
+                        className={`py-1 text-xs border rounded transition-colors uppercase font-bold ${
+                          activeSettings.touchControls === tc
+                            ? 'bg-yellow-500 text-black border-yellow-300'
+                            : 'bg-black/40 text-gray-400 border-gray-600 hover:bg-black/60'
+                        }`}
+                      >
+                        {tc === 'auto' ? 'Oto' : tc === 'enabled' ? 'Açık' : 'Kapalı'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Visual Widgets Toggles */}
+                <div className="flex flex-col gap-2 bg-black/30 p-2 border border-gray-700/80 rounded mt-1">
+                  <label className="flex items-center justify-between cursor-pointer group">
+                    <span className="text-xs text-gray-300 group-hover:text-white transition-colors">Skor Tablosu (Scoreboard)</span>
+                    <input
+                      type="checkbox"
+                      checked={!!activeSettings.showScoreboard}
+                      onChange={(e) => {
+                        soundManager.playClick();
+                        handleUpdateSetting('showScoreboard', e.target.checked);
+                      }}
+                      className="w-4 h-4 rounded border-gray-600 text-yellow-500 focus:ring-yellow-400 bg-gray-700"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between cursor-pointer group">
+                    <span className="text-xs text-gray-300 group-hover:text-white transition-colors">Ekranda Gecikme Göster (Ping)</span>
+                    <input
+                      type="checkbox"
+                      checked={!!activeSettings.showPing}
+                      onChange={(e) => {
+                        soundManager.playClick();
+                        handleUpdateSetting('showPing', e.target.checked);
+                      }}
+                      className="w-4 h-4 rounded border-gray-600 text-yellow-500 focus:ring-yellow-400 bg-gray-700"
+                    />
+                  </label>
+                </div>
+
+                <button
+                  onClick={() => {
+                    soundManager.playClick();
+                    setMenuScreen('main');
+                  }}
+                  className="py-2.5 bg-[#4a7c34] hover:bg-[#5b9640] text-white border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-lg font-bold shadow-md mt-1"
+                >
+                  💾 Ayarları Kaydet ve Dön
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1683,6 +2029,58 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
             >
               İptal Et / Çıkış
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Minecraft Sidebar Scoreboard */}
+      {activeSettings.showScoreboard && scoreboard && (
+        <div id="minecraft-scoreboard" className="absolute right-4 top-1/4 z-30 bg-black/70 border-2 border-white/10 p-2.5 rounded text-white font-mono text-sm max-w-[200px] pointer-events-none">
+          <div className="text-yellow-400 font-bold text-center border-b border-white/10 pb-1 mb-1.5 truncate uppercase">
+            {scoreboard.title}
+          </div>
+          <div className="flex flex-col gap-1 text-[11px] sm:text-xs">
+            {scoreboard.items.map((item: any, idx: number) => (
+              <div key={idx} className="flex justify-between gap-4">
+                <span className="text-gray-200 truncate">{item.name}</span>
+                <span className="text-red-400 text-right font-bold">{item.score !== undefined ? item.score : item.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Player Tab List Overlay */}
+      {tabListOpen && (
+        <div id="player-tab-list" className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center pointer-events-none">
+          <div className="bg-black/95 border-4 border-gray-600/80 p-4 rounded-lg w-full max-w-lg shadow-2xl font-mono text-white pointer-events-auto max-h-[85vh] overflow-y-auto">
+            <div className="text-yellow-400 text-center text-lg font-bold mb-3 border-b border-gray-700 pb-1 flex justify-between items-center px-1">
+              <span>👥 AKTİF OYUNCULAR ({tabList.length})</span>
+              <span className="text-xs text-green-400 font-mono">Sunucu Gecikmesi: {ping}ms</span>
+            </div>
+            {tabList.length === 0 ? (
+              <div className="text-gray-400 text-center py-2 font-mono">Oyuncu bulunamadı</div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {tabList.map((player: any, idx: number) => {
+                  const pingVal = typeof player.ping === 'number' ? player.ping : 0;
+                  const pingColor = pingVal < 80 ? 'text-green-400' : pingVal < 180 ? 'text-yellow-400' : 'text-red-500';
+                  return (
+                    <div key={idx} className="bg-white/5 border border-white/10 px-2 py-1.5 rounded flex items-center justify-between text-xs sm:text-sm hover:bg-white/10 transition-colors">
+                      <span className="truncate font-bold text-emerald-300 flex items-center gap-1">
+                        👤 {player.username}
+                      </span>
+                      <span className={`text-[10px] font-bold font-mono ${pingColor}`}>
+                        📶 {pingVal}ms
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="text-[10px] text-gray-400 text-center mt-3 font-mono leading-tight">
+              Sohbet penceresinde oyuncu isimlerini veya komutları tamamlamak için TAB tuşuna basabilirsiniz.
+            </div>
           </div>
         </div>
       )}

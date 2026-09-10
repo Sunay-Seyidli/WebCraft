@@ -115,16 +115,13 @@ export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
 
   const eName = (data.name || data.type || 'player').toLowerCase();
 
-  // 1. Check if this is a Hologram or Text Display entity (DecentHolograms, HolographicDisplays, text_display)
-  const isHologram = 
-    data.isHologram || 
+  // 1. Check if this is a Pure Hologram (Text Display, Area Effect Cloud, or Marker)
+  const isPureHologram = 
     eName === 'text_display' || 
-    eName === 'interaction' || 
     eName === 'area_effect_cloud' || 
-    eName === 'marker' || 
-    (eName === 'armor_stand' && !!data.customName);
+    eName === 'marker';
 
-  if (isHologram) {
+  if (isPureHologram) {
     const rawText = data.customName || data.name;
     const isCleanText = rawText && !['text_display', 'interaction', 'area_effect_cloud', 'marker', 'armor_stand'].includes(rawText.toLowerCase());
     
@@ -149,7 +146,13 @@ export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
     };
   }
 
-  const colors = ENTITY_COLORS[eName] || ENTITY_COLORS.player;
+  // Add custom entity palettes for armor_stands, interactions and other types
+  const customPalettes: Record<string, { head: number; body: number; legs: number; arms: number }> = {
+    armor_stand: { head: 0x8b5a2b, body: 0x8b5a2b, legs: 0x8b5a2b, arms: 0x8b5a2b },
+    interaction: { head: 0x3b82f6, body: 0x3b82f6, legs: 0x3b82f6, arms: 0x3b82f6 },
+  };
+
+  const colors = customPalettes[eName] || ENTITY_COLORS[eName] || ENTITY_COLORS.player;
 
   let leftLeg: THREE.Mesh | undefined;
   let rightLeg: THREE.Mesh | undefined;
