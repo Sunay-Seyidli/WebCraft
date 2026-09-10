@@ -154,6 +154,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   });
 
   const lastActionTimeRef = useRef<number>(0);
+  const isMouseDownLeftRef = useRef(false);
+  const isMouseDownRightRef = useRef(false);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
@@ -786,9 +788,6 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
       return null;
     };
-
-    const isMouseDownLeftRef = useRef(false);
-    const isMouseDownRightRef = useRef(false);
 
     // BREAK ACTION
     const performBreak = () => {
