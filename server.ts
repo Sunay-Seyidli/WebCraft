@@ -660,7 +660,7 @@ async function startServer() {
           port: botPort,
           username,
           auth: "offline",
-          checkTimeoutInterval: 45000,
+          checkTimeoutInterval: 180000,
           hideErrors: false,
           skipValidation: true,
         };
@@ -892,21 +892,7 @@ async function startServer() {
         }
       });
 
-      bot.on("playerJoined", (player: any) => {
-        if (player && player.username) {
-          sendChatMessage("Sistem", `${player.username} oyuna katıldı`, true);
-        }
-      });
-
-      bot.on("playerLeft", (player: any) => {
-        if (player && player.username) {
-          sendChatMessage("Sistem", `${player.username} oyundan ayrıldı`, true);
-        }
-      });
-
-      bot.on("death", () => {
-        sendChatMessage("Sistem", "Öldünüz!", true);
-      });
+      // Handled by Minecraft server built-in chat system to avoid duplicates.
 
       // ==========================================
       // TAB LIST & SCOREBOARD PROTOCOL SYNC

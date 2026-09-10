@@ -1380,7 +1380,6 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     if (!text) return;
 
     soundManager.playClick();
-    addChatMessage('Ben', text);
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'chat', text }));
@@ -1721,7 +1720,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
             {messages.slice(-60).map((m) => (
               <div key={m.id} className="leading-tight break-words">
                 <span className="text-gray-400 text-xs">[{m.time}] </span>
-                {m.sender !== 'Sunucu' && m.sender !== 'System' && m.sender !== 'Sistem' && (
+                {m.sender && !['sunucu', 'system', 'sistem', 'server'].includes(m.sender.toLowerCase()) && (
                   <span className={m.isSystem ? 'text-yellow-400 font-bold' : 'text-emerald-300 font-bold'}>
                     {m.sender}:{' '}
                   </span>
@@ -1777,7 +1776,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
             {messages.slice(chatOpen ? -80 : -8).map((m) => (
               <div key={m.id} className="drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] leading-tight break-words">
                 <span className="text-gray-400 text-xs">[{m.time}] </span>
-                {m.sender !== 'Sunucu' && m.sender !== 'System' && m.sender !== 'Sistem' && (
+                {m.sender && !['sunucu', 'system', 'sistem', 'server'].includes(m.sender.toLowerCase()) && (
                   <span className={m.isSystem ? 'text-yellow-400 font-bold' : 'text-emerald-300 font-bold'}>
                     {m.sender}:{' '}
                   </span>
