@@ -302,11 +302,11 @@ function extractChunkColumnBlocks(bot: any, chunkStartX: number, chunkStartZ: nu
 
         consecutiveSolid++;
 
-        // Surface blocks only: keep top solid surface block layer (plus transparent/liquid/leaves)
-        if (consecutiveSolid <= 1 || b.transparent || b.name === "water" || b.name === "lava" || b.name === "glass" || b.name === "oak_leaves") {
+        // Surface & slope blocks: keep top 8 solid block layers (plus transparent/liquid/leaves)
+        if (consecutiveSolid <= 8 || b.transparent || b.name.includes("water") || b.name.includes("lava") || b.name.includes("glass") || b.name.includes("leaves")) {
           blocks.push({ x, y, z, type: b.name });
         } else {
-          // Solid underground layer reached - immediately break column to save massive CPU cycles
+          // Solid underground interior reached
           break;
         }
       }

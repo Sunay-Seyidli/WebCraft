@@ -3,7 +3,12 @@ import { BlockType } from '../types';
 
 export type TextureMode = 'vanilla' | 'realistic' | 'faithful';
 
-// Helper to generate crisp or HD textures for Minecraft blocks
+const textureCache = new Map<string, THREE.CanvasTexture>();
+const blockFaceCache = new Map<string, any>();
+
+/**
+ * Creates a crisp pixel-art canvas texture for Three.js
+ */
 export function createPixelTexture(
   size: number,
   drawFn: (ctx: CanvasRenderingContext2D, s: number) => void
@@ -14,431 +19,398 @@ export function createPixelTexture(
   const ctx = canvas.getContext('2d');
   
   if (ctx) {
-    ctx.imageSmoothingEnabled = size >= 64;
+    ctx.imageSmoothingEnabled = false;
     drawFn(ctx, size);
   }
 
   const texture = new THREE.CanvasTexture(canvas);
-  texture.magFilter = size >= 64 ? THREE.LinearFilter : THREE.NearestFilter;
-  texture.minFilter = size >= 64 ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter;
-  texture.generateMipmaps = true;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
   return texture;
 }
 
-export const blockTextures: Record<
-  BlockType,
-  THREE.CanvasTexture | { top: THREE.CanvasTexture; side: THREE.CanvasTexture; bottom: THREE.CanvasTexture }
-> = {} as any;
+/**
+ * Generates high-quality procedural pixel textures matching Minecraft 1.21.4 color palettes
+ */
+function generateProceduralTexture(type: string): THREE.CanvasTexture {
+  const size = 16;
+  if (textureCache.has(type)) return textureCache.get(type)!;
+
+  const tex = createPixelTexture(size, (ctx, s) => {
+    // 1. Grass Top (Lush Vibrant Minecraft Plains Green)
+    if (type === 'grass_top') {
+      ctx.fillStyle = '#55ab2f';
+      ctx.fillRect(0, 0, s, s);
+      const greens = ['#62be36', '#489c25', '#3d861e', '#6ed140'];
+      for (let i = 0; i < 65; i++) {
+        ctx.fillStyle = greens[Math.floor(Math.random() * greens.length)];
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+      }
+    }
+    // 2. Grass Side (Dirt base with lush green overhang)
+    else if (type === 'grass_side') {
+      // Dirt base
+      ctx.fillStyle = '#866043';
+      ctx.fillRect(0, 0, s, s);
+      const dirtColors = ['#735136', '#9c7252', '#5e4028'];
+      for (let i = 0; i < 40; i++) {
+        ctx.fillStyle = dirtColors[Math.floor(Math.random() * dirtColors.length)];
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+      }
+      // Top overhang green grass trim
+      ctx.fillStyle = '#55ab2f';
+      ctx.fillRect(0, 0, s, 3);
+      for (let x = 0; x < s; x++) {
+        const overhang = Math.random() > 0.4 ? 4 : Math.random() > 0.7 ? 5 : 3;
+        ctx.fillRect(x, 0, 1, overhang);
+      }
+    }
+    // 3. Dirt
+    else if (type === 'dirt' || type.includes('mud') || type.includes('path') || type.includes('farmland')) {
+      ctx.fillStyle = '#866043';
+      ctx.fillRect(0, 0, s, s);
+      const dirtColors = ['#735136', '#9c7252', '#5c3e26', '#69482d'];
+      for (let i = 0; i < 60; i++) {
+        ctx.fillStyle = dirtColors[Math.floor(Math.random() * dirtColors.length)];
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+      }
+    }
+    // 4. Leaves (Vibrant Lush Green foliage)
+    else if (type.includes('leaves') || type.includes('vine') || type.includes('bush') || type.includes('sapling')) {
+      if (type.includes('cherry')) {
+        ctx.fillStyle = '#ffb7c5';
+        ctx.fillRect(0, 0, s, s);
+        const cherryColors = ['#f79bb0', '#e08298', '#ffd6e0'];
+        for (let i = 0; i < 50; i++) {
+          ctx.fillStyle = cherryColors[Math.floor(Math.random() * cherryColors.length)];
+          ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+        }
+      } else {
+        ctx.fillStyle = '#388e3c';
+        ctx.fillRect(0, 0, s, s);
+        const leafColors = ['#2e7d32', '#4caf50', '#1b5e20', '#43a047'];
+        for (let i = 0; i < 70; i++) {
+          ctx.fillStyle = leafColors[Math.floor(Math.random() * leafColors.length)];
+          ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+        }
+      }
+    }
+    // 5. Stone / Cobblestone
+    else if (type === 'stone' || type === 'cobblestone' || type.includes('andesite') || type.includes('tuff')) {
+      ctx.fillStyle = type === 'cobblestone' ? '#686868' : '#7d7d7d';
+      ctx.fillRect(0, 0, s, s);
+      const stoneColors = ['#616161', '#8e8e8e', '#525252', '#a1a1a1'];
+      for (let i = 0; i < 60; i++) {
+        ctx.fillStyle = stoneColors[Math.floor(Math.random() * stoneColors.length)];
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+      }
+      if (type === 'cobblestone') {
+        ctx.strokeStyle = '#424242';
+        ctx.strokeRect(1, 1, 6, 6);
+        ctx.strokeRect(8, 2, 7, 5);
+        ctx.strokeRect(2, 9, 7, 6);
+      }
+    }
+    // 6. Deepslate
+    else if (type.includes('deepslate')) {
+      ctx.fillStyle = '#36363c';
+      ctx.fillRect(0, 0, s, s);
+      const dsColors = ['#29292e', '#45454d', '#1f1f24'];
+      for (let i = 0; i < 60; i++) {
+        ctx.fillStyle = dsColors[Math.floor(Math.random() * dsColors.length)];
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+      }
+    }
+    // 7. Planks (Wood)
+    else if (type.includes('plank') || type.includes('slab') || type.includes('stair') || type.includes('fence')) {
+      let baseColor = '#b08b52'; // Oak default
+      if (type.includes('spruce')) baseColor = '#6d4c33';
+      else if (type.includes('birch')) baseColor = '#d7c297';
+      else if (type.includes('jungle')) baseColor = '#a07252';
+      else if (type.includes('acacia')) baseColor = '#b25a32';
+      else if (type.includes('dark_oak')) baseColor = '#3f2918';
+      else if (type.includes('crimson')) baseColor = '#682d3e';
+      else if (type.includes('warped')) baseColor = '#2b6867';
+      else if (type.includes('cherry')) baseColor = '#e0a39e';
+
+      ctx.fillStyle = baseColor;
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(0, 3, s, 1);
+      ctx.fillRect(0, 7, s, 1);
+      ctx.fillRect(0, 11, s, 1);
+      ctx.fillRect(0, 15, s, 1);
+    }
+    // 8. Logs (Side)
+    else if (type.endsWith('_log') || type.endsWith('_stem') || type.endsWith('_wood')) {
+      ctx.fillStyle = '#6e4f29';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#4f381c';
+      for (let x = 0; x < s; x += 3) {
+        ctx.fillRect(x, 0, 1, s);
+      }
+      ctx.fillStyle = '#8a6538';
+      for (let i = 0; i < 20; i++) {
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 2);
+      }
+    }
+    // 9. Log Top
+    else if (type.endsWith('_log_top')) {
+      ctx.fillStyle = '#b08b52';
+      ctx.fillRect(0, 0, s, s);
+      ctx.strokeStyle = '#6e4f29';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(2, 2, 12, 12);
+      ctx.strokeRect(5, 5, 6, 6);
+    }
+    // 10. Ores
+    else if (type.includes('ore')) {
+      ctx.fillStyle = type.includes('deepslate') ? '#36363c' : '#7d7d7d';
+      ctx.fillRect(0, 0, s, s);
+      for (let i = 0; i < 40; i++) {
+        ctx.fillStyle = type.includes('deepslate') ? '#252529' : '#616161';
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+      }
+      // Crystals
+      let gemColor = '#38bdf8'; // Diamond
+      if (type.includes('coal')) gemColor = '#222222';
+      else if (type.includes('iron')) gemColor = '#d1a384';
+      else if (type.includes('gold')) gemColor = '#facc15';
+      else if (type.includes('copper')) gemColor = '#e07a5f';
+      else if (type.includes('emerald')) gemColor = '#22c55e';
+      else if (type.includes('lapis')) gemColor = '#2563eb';
+      else if (type.includes('redstone')) gemColor = '#ef4444';
+
+      ctx.fillStyle = gemColor;
+      ctx.fillRect(3, 4, 3, 3);
+      ctx.fillRect(10, 3, 3, 2);
+      ctx.fillRect(6, 10, 3, 3);
+      ctx.fillRect(11, 11, 2, 3);
+    }
+    // 11. Crafting Table Top
+    else if (type === 'crafting_table_top') {
+      ctx.fillStyle = '#9c6e39';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#65421d';
+      ctx.fillRect(3, 3, 10, 10);
+      ctx.strokeStyle = '#c49a5b';
+      ctx.strokeRect(3, 3, 10, 10);
+    }
+    // 12. Crafting Table Side
+    else if (type === 'crafting_table_side') {
+      ctx.fillStyle = '#9c6e39';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#4a2f13';
+      ctx.fillRect(2, 5, 12, 8);
+    }
+    // 13. Furnace Front
+    else if (type === 'furnace_front') {
+      ctx.fillStyle = '#686868';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#1c1c1c';
+      ctx.fillRect(3, 6, 10, 8);
+      ctx.fillStyle = '#ea580c';
+      ctx.fillRect(5, 9, 6, 3);
+    }
+    // 14. Bookshelf Side
+    else if (type === 'bookshelf_side') {
+      ctx.fillStyle = '#bc9355';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#2b1d0c';
+      ctx.fillRect(2, 2, 12, 5);
+      ctx.fillRect(2, 9, 12, 5);
+      const bookColors = ['#dc2626', '#2563eb', '#16a34a', '#ca8a04', '#9333ea'];
+      for (let i = 0; i < 5; i++) {
+        ctx.fillStyle = bookColors[i % bookColors.length];
+        ctx.fillRect(3 + i * 2, 3, 2, 4);
+        ctx.fillRect(3 + i * 2, 10, 2, 4);
+      }
+    }
+    // 15. TNT Side
+    else if (type === 'tnt_side') {
+      ctx.fillStyle = '#dc2626';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 5, s, 6);
+      ctx.fillStyle = '#000000';
+      ctx.font = 'bold 5px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('TNT', 8, 8);
+    }
+    // 16. Water / Lava / Obsidian / Bedrock / Glass / Bricks / Sand / Wool
+    else if (type.includes('water')) {
+      ctx.fillStyle = '#2563eb';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#60a5fa';
+      for (let i = 0; i < 15; i++) {
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 2, 1);
+      }
+    } else if (type.includes('lava')) {
+      ctx.fillStyle = '#c2410c';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#f97316';
+      for (let i = 0; i < 20; i++) {
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 2, 2);
+      }
+    } else if (type.includes('obsidian')) {
+      ctx.fillStyle = '#120b1f';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#3c1d63';
+      for (let i = 0; i < 25; i++) {
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 2, 2);
+      }
+    } else if (type.includes('bedrock')) {
+      ctx.fillStyle = '#222222';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#444444';
+      for (let i = 0; i < 40; i++) {
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+      }
+    } else if (type.includes('glass')) {
+      ctx.clearRect(0, 0, s, s);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0, 0, s, s);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.fillRect(3, 3, 2, 2);
+      ctx.fillRect(11, 11, 2, 2);
+    } else if (type.includes('brick')) {
+      ctx.fillStyle = '#9e4a38';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#d1c7be';
+      ctx.fillRect(0, 3, s, 1);
+      ctx.fillRect(0, 7, s, 1);
+      ctx.fillRect(0, 11, s, 1);
+      ctx.fillRect(0, 15, s, 1);
+      ctx.fillRect(8, 0, 1, 3);
+      ctx.fillRect(4, 4, 1, 3);
+      ctx.fillRect(12, 8, 1, 3);
+    } else if (type.includes('sand')) {
+      ctx.fillStyle = '#ded29d';
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = '#ccbf8c';
+      for (let i = 0; i < 35; i++) {
+        ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+      }
+    } else {
+      // Dynamic General Fallback color based on block name string
+      let color = '#7d7d7d';
+      if (type.includes('grass')) color = '#55ab2f';
+      else if (type.includes('dirt')) color = '#866043';
+      else if (type.includes('wood') || type.includes('log') || type.includes('plank')) color = '#b08b52';
+      else if (type.includes('nether') || type.includes('crimson')) color = '#6b1d1d';
+      else if (type.includes('quartz') || type.includes('diorite') || type.includes('snow')) color = '#e5e7eb';
+      else if (type.includes('gold') || type.includes('glowstone') || type.includes('yellow')) color = '#facc15';
+      else if (type.includes('iron') || type.includes('gray')) color = '#9ca3af';
+      else if (type.includes('diamond') || type.includes('cyan') || type.includes('blue')) color = '#38bdf8';
+
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = 'rgba(0,0,0,0.12)';
+      ctx.fillRect(0, 0, s, 1);
+      ctx.fillRect(0, 0, 1, s);
+    }
+  });
+
+  textureCache.set(type, tex);
+  return tex;
+}
+
+export function getBlockTextureObj(rawType: string): any {
+  const type = rawType.toLowerCase().replace('minecraft:', '').trim();
+
+  if (blockFaceCache.has(type)) return blockFaceCache.get(type);
+
+  let result: any = null;
+
+  // Grass Block
+  if (type === 'grass' || type === 'grass_block') {
+    const top = generateProceduralTexture('grass_top');
+    const side = generateProceduralTexture('grass_side');
+    const bottom = generateProceduralTexture('dirt');
+    result = { top, side, bottom };
+  }
+  // Logs & Stems
+  else if (type.endsWith('_log') || type.endsWith('_stem') || type.endsWith('_wood')) {
+    const top = generateProceduralTexture('oak_log_top');
+    const side = generateProceduralTexture(type);
+    result = { top, side, bottom: top };
+  }
+  // Crafting Table
+  else if (type === 'crafting_table') {
+    const top = generateProceduralTexture('crafting_table_top');
+    const side = generateProceduralTexture('crafting_table_side');
+    const bottom = generateProceduralTexture('oak_planks');
+    result = { top, side, bottom };
+  }
+  // Furnace
+  else if (type === 'furnace') {
+    const top = generateProceduralTexture('stone');
+    const side = generateProceduralTexture('furnace_front');
+    const bottom = generateProceduralTexture('stone');
+    result = { top, side, bottom };
+  }
+  // Bookshelf
+  else if (type === 'bookshelf') {
+    const top = generateProceduralTexture('oak_planks');
+    const side = generateProceduralTexture('bookshelf_side');
+    result = { top, side, bottom: top };
+  }
+  // TNT
+  else if (type === 'tnt') {
+    const top = generateProceduralTexture('wool');
+    const side = generateProceduralTexture('tnt_side');
+    const bottom = generateProceduralTexture('wool');
+    result = { top, side, bottom };
+  }
+  // All other single-texture blocks
+  else {
+    result = generateProceduralTexture(type);
+  }
+
+  blockFaceCache.set(type, result);
+  return result;
+}
+
+// Proxy wrapper so any blockTextures['whatever'] resolves dynamically in code
+export const blockTextures: Record<string, any> = new Proxy({}, {
+  get(_target, prop: string) {
+    if (typeof prop !== 'string') return generateProceduralTexture('stone');
+    return getBlockTextureObj(prop);
+  }
+});
 
 let currentLoadedMode: TextureMode | null = null;
 
 export function initTextures(mode: TextureMode = 'realistic') {
-  if (currentLoadedMode === mode && Object.keys(blockTextures).length > 0) return;
   currentLoadedMode = mode;
-
-  const size = mode === 'realistic' ? 64 : mode === 'faithful' ? 32 : 16;
-  const isHD = mode === 'realistic';
-
-  // 1. Grass Block
-  const grassTop = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = isHD ? '#417d29' : '#55a038';
-    ctx.fillRect(0, 0, s, s);
-    const dots = isHD ? 280 : 35;
-    for (let i = 0; i < dots; i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? (isHD ? '#4c8f30' : '#63b242') : (isHD ? '#356920' : '#478c2d');
-      const w = isHD ? 2 : 1;
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), w, isHD ? 4 : 1);
-    }
-  });
-
-  const dirtTex = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = isHD ? '#704c31' : '#866043';
-    ctx.fillRect(0, 0, s, s);
-    const dots = isHD ? 350 : 45;
-    for (let i = 0; i < dots; i++) {
-      const v = Math.random();
-      ctx.fillStyle = v > 0.6 ? '#855c3c' : v > 0.3 ? '#5c3e27' : '#482f1b';
-      const w = isHD ? 2 : 1;
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), w, w);
-    }
-  });
-
-  const grassSide = createPixelTexture(size, (ctx, s) => {
-    // Dirt base
-    ctx.fillStyle = isHD ? '#704c31' : '#866043';
-    ctx.fillRect(0, 0, s, s);
-    const dots = isHD ? 300 : 40;
-    for (let i = 0; i < dots; i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#5c3e27' : '#855c3c';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 2 : 1, isHD ? 2 : 1);
-    }
-    // Grass overhang
-    const topH = Math.floor(s * 0.28);
-    ctx.fillStyle = isHD ? '#417d29' : '#55a038';
-    ctx.fillRect(0, 0, s, topH);
-    // Blades hanging down
-    const step = isHD ? 4 : 2;
-    for (let x = 0; x < s; x += step) {
-      const drip = Math.floor(Math.random() * (topH * 0.8));
-      ctx.fillRect(x, topH, step, drip);
-    }
-  });
-
-  blockTextures.grass = { top: grassTop, side: grassSide, bottom: dirtTex };
-  blockTextures.dirt = dirtTex;
-
-  // 2. Stone
-  blockTextures.stone = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = isHD ? '#6b6b6b' : '#737373';
-    ctx.fillRect(0, 0, s, s);
-    const count = isHD ? 400 : 40;
-    for (let i = 0; i < count; i++) {
-      const v = Math.random();
-      ctx.fillStyle = v > 0.6 ? '#808080' : v > 0.3 ? '#575757' : '#454545';
-      const sz = isHD ? Math.floor(Math.random() * 3) + 1 : 1;
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), sz, sz);
-    }
-    if (isHD) {
-      // Natural stone fracture veins
-      ctx.strokeStyle = '#404040';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(s * 0.2, s * 0.3);
-      ctx.lineTo(s * 0.5, s * 0.6);
-      ctx.lineTo(s * 0.8, s * 0.5);
-      ctx.stroke();
-    }
-  });
-
-  // 3. Cobblestone
-  blockTextures.cobblestone = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = isHD ? '#545454' : '#595959';
-    ctx.fillRect(0, 0, s, s);
-    const grid = isHD ? 16 : 4;
-    // Mortar / shadow lines
-    ctx.fillStyle = '#2b2b2b';
-    for (let x = 0; x < s; x += grid) {
-      ctx.fillRect(x, 0, isHD ? 2 : 1, s);
-    }
-    for (let y = 0; y < s; y += grid) {
-      ctx.fillRect(0, y, s, isHD ? 2 : 1);
-    }
-    const count = isHD ? 350 : 40;
-    for (let i = 0; i < count; i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#707070' : '#3d3d3d';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 2 : 1, isHD ? 2 : 1);
-    }
-  });
-
-  // 4. Oak Planks
-  blockTextures.oak_planks = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = isHD ? '#bc9355' : '#c49a5b';
-    ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = '#8f682f';
-    const plankH = Math.floor(s / 4);
-    for (let y = 0; y < s; y += plankH) {
-      ctx.fillRect(0, y, s, isHD ? 2 : 1);
-    }
-    // Wood grain lines
-    ctx.fillStyle = isHD ? 'rgba(120, 85, 35, 0.4)' : '#a37c3c';
-    for (let i = 0; i < (isHD ? 20 : 6); i++) {
-      ctx.fillRect(0, Math.floor(Math.random() * s), s, 1);
-    }
-    // Vertical seams
-    ctx.fillStyle = '#6b4b1e';
-    ctx.fillRect(Math.floor(s * 0.25), 0, isHD ? 2 : 1, plankH);
-    ctx.fillRect(Math.floor(s * 0.75), plankH, isHD ? 2 : 1, plankH);
-    ctx.fillRect(Math.floor(s * 0.4), plankH * 2, isHD ? 2 : 1, plankH);
-    ctx.fillRect(Math.floor(s * 0.85), plankH * 3, isHD ? 2 : 1, plankH);
-  });
-
-  // 5. Oak Log
-  const logSide = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#543b1c';
-    ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = '#33210d';
-    const barkStep = isHD ? 4 : 3;
-    for (let x = 0; x < s; x += barkStep) {
-      ctx.fillRect(x, 0, isHD ? 2 : 1, s);
-    }
-    ctx.fillStyle = '#6e4f29';
-    for (let i = 0; i < (isHD ? 40 : 10); i++) {
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 2, isHD ? 6 : 2);
-    }
-  });
-
-  const logTop = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#b08b52';
-    ctx.fillRect(0, 0, s, s);
-    ctx.strokeStyle = '#75582f';
-    ctx.lineWidth = isHD ? 2 : 1;
-    ctx.strokeRect(s * 0.15, s * 0.15, s * 0.7, s * 0.7);
-    ctx.strokeRect(s * 0.32, s * 0.32, s * 0.36, s * 0.36);
-  });
-  blockTextures.oak_log = { top: logTop, side: logSide, bottom: logTop };
-
-  // 6. Oak Leaves
-  blockTextures.oak_leaves = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = isHD ? '#2e5416' : '#375e1d';
-    ctx.fillRect(0, 0, s, s);
-    const count = isHD ? 350 : 50;
-    for (let i = 0; i < count; i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#407521' : '#1f3b0e';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 2 : 1, isHD ? 2 : 1);
-    }
-  });
-
-  // 7. Bricks
-  blockTextures.bricks = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#9e4a38';
-    ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = '#d1c7be';
-    const bH = Math.floor(s / 4);
-    for (let y = 0; y < s; y += bH) {
-      ctx.fillRect(0, y, s, isHD ? 2 : 1);
-    }
-    ctx.fillRect(Math.floor(s * 0.45), 0, isHD ? 2 : 1, bH);
-    ctx.fillRect(Math.floor(s * 0.15), bH, isHD ? 2 : 1, bH);
-    ctx.fillRect(Math.floor(s * 0.65), bH * 2, isHD ? 2 : 1, bH);
-    ctx.fillRect(Math.floor(s * 0.3), bH * 3, isHD ? 2 : 1, bH);
-  });
-
-  // 8. Glass
-  blockTextures.glass = createPixelTexture(size, (ctx, s) => {
-    ctx.clearRect(0, 0, s, s);
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = isHD ? 2 : 1;
-    ctx.strokeRect(0, 0, s, s);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    ctx.fillRect(Math.floor(s * 0.25), Math.floor(s * 0.25), isHD ? 4 : 1, isHD ? 4 : 1);
-    ctx.fillRect(Math.floor(s * 0.7), Math.floor(s * 0.7), isHD ? 4 : 1, isHD ? 4 : 1);
-  });
-
-  // 9. Water
-  blockTextures.water = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#2563eb';
-    ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = '#60a5fa';
-    for (let i = 0; i < (isHD ? 50 : 15); i++) {
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 4 : 2, 1);
-    }
-  });
-
-  // 10. Bedrock
-  blockTextures.bedrock = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#222222';
-    ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < (isHD ? 350 : 60); i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#111111' : '#3d3d3d';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 2 : 1, isHD ? 2 : 1);
-    }
-  });
-
-  // 11. Sand
-  blockTextures.sand = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#ded29d';
-    ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < (isHD ? 300 : 40); i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#ccbf8c' : '#ede2b0';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 2 : 1, isHD ? 2 : 1);
-    }
-  });
-
-  // 12. Diamond Ore
-  blockTextures.diamond_ore = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = isHD ? '#6b6b6b' : '#737373';
-    ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < (isHD ? 300 : 35); i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#555555' : '#858585';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 2 : 1, isHD ? 2 : 1);
-    }
-    // Crystal clusters
-    ctx.fillStyle = '#38bdf8';
-    const cSize = isHD ? 6 : 2;
-    ctx.fillRect(Math.floor(s * 0.2), Math.floor(s * 0.25), cSize, cSize);
-    ctx.fillRect(Math.floor(s * 0.65), Math.floor(s * 0.15), cSize, cSize);
-    ctx.fillRect(Math.floor(s * 0.45), Math.floor(s * 0.7), cSize, cSize);
-    ctx.fillRect(Math.floor(s * 0.8), Math.floor(s * 0.8), isHD ? 4 : 1, isHD ? 4 : 1);
-    ctx.fillStyle = '#bae6fd';
-    ctx.fillRect(Math.floor(s * 0.2) + 1, Math.floor(s * 0.25) + 1, isHD ? 2 : 1, isHD ? 2 : 1);
-  });
-
-  // 13. Obsidian
-  blockTextures.obsidian = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#120b1f';
-    ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < (isHD ? 250 : 30); i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#24123b' : '#3c1d63';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 4 : 2, isHD ? 4 : 2);
-    }
-  });
-
-  // 14. Gold Ore
-  blockTextures.gold_ore = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = isHD ? '#6b6b6b' : '#737373';
-    ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < (isHD ? 300 : 35); i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#555555' : '#858585';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 2 : 1, isHD ? 2 : 1);
-    }
-    ctx.fillStyle = '#facc15';
-    const gSize = isHD ? 6 : 2;
-    ctx.fillRect(Math.floor(s * 0.3), Math.floor(s * 0.35), gSize, gSize);
-    ctx.fillRect(Math.floor(s * 0.7), Math.floor(s * 0.55), gSize, gSize);
-    ctx.fillStyle = '#fef08a';
-    ctx.fillRect(Math.floor(s * 0.3) + 1, Math.floor(s * 0.35) + 1, isHD ? 2 : 1, isHD ? 2 : 1);
-  });
-
-  // 15. Lava
-  blockTextures.lava = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#c2410c';
-    ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = '#f97316';
-    for (let i = 0; i < (isHD ? 200 : 25); i++) {
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 6 : 2, isHD ? 6 : 2);
-    }
-    ctx.fillStyle = '#facc15';
-    for (let i = 0; i < (isHD ? 60 : 10); i++) {
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 3 : 1, isHD ? 3 : 1);
-    }
-  });
-
-  // 16. Iron Block
-  blockTextures.iron_block = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#d8d8d8';
-    ctx.fillRect(0, 0, s, s);
-    ctx.strokeStyle = '#b0b0b0';
-    ctx.lineWidth = isHD ? 2 : 1;
-    ctx.strokeRect(1, 1, s - 2, s - 2);
-    for (let i = 0; i < (isHD ? 150 : 25); i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#ffffff' : '#bfbfbf';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 2 : 1, isHD ? 2 : 1);
-    }
-  });
-
-  // 17. Crafting Table
-  const ctTop = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#9c6e39';
-    ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = '#65421d';
-    ctx.fillRect(s * 0.2, s * 0.2, s * 0.6, s * 0.6);
-    ctx.strokeStyle = '#c49a5b';
-    ctx.strokeRect(s * 0.2, s * 0.2, s * 0.6, s * 0.6);
-  });
-  const ctSide = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#9c6e39';
-    ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = '#4a2f13';
-    ctx.fillRect(s * 0.1, s * 0.3, s * 0.8, s * 0.5);
-  });
-  blockTextures.crafting_table = { top: ctTop, side: ctSide, bottom: blockTextures.oak_planks as any };
-
-  // 18. Furnace
-  const furnaceFront = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#595959';
-    ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = '#1c1c1c';
-    ctx.fillRect(s * 0.2, s * 0.4, s * 0.6, s * 0.45);
-    ctx.fillStyle = '#ea580c';
-    ctx.fillRect(s * 0.3, s * 0.6, s * 0.4, s * 0.2);
-  });
-  blockTextures.furnace = { top: blockTextures.stone as any, side: furnaceFront, bottom: blockTextures.stone as any };
-
-  // 19. Wool
-  blockTextures.wool = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#e5e7eb';
-    ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < (isHD ? 250 : 35); i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#f3f4f6' : '#d1d5db';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 2 : 1, isHD ? 2 : 1);
-    }
-  });
-
-  // 20. Bookshelf
-  const shelfSide = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#bc9355';
-    ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = '#2b1d0c';
-    ctx.fillRect(s * 0.1, s * 0.15, s * 0.8, s * 0.3);
-    ctx.fillRect(s * 0.1, s * 0.55, s * 0.8, s * 0.3);
-    // Books
-    const colors = ['#dc2626', '#2563eb', '#16a34a', '#ca8a04', '#9333ea'];
-    for (let i = 0; i < 6; i++) {
-      ctx.fillStyle = colors[i % colors.length];
-      ctx.fillRect(s * 0.15 + i * (s * 0.12), s * 0.18, s * 0.1, s * 0.24);
-      ctx.fillRect(s * 0.15 + i * (s * 0.12), s * 0.58, s * 0.1, s * 0.24);
-    }
-  });
-  blockTextures.bookshelf = { top: blockTextures.oak_planks as any, side: shelfSide, bottom: blockTextures.oak_planks as any };
-
-  // 21. TNT
-  const tntSide = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#dc2626';
-    ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, s * 0.35, s, s * 0.3);
-    ctx.fillStyle = '#000000';
-    ctx.font = `bold ${Math.floor(s * 0.24)}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('TNT', s * 0.5, s * 0.5);
-  });
-  blockTextures.tnt = { top: blockTextures.wool as any, side: tntSide, bottom: blockTextures.wool as any };
-
-  // 22. Netherrack
-  blockTextures.netherrack = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#6b1d1d';
-    ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < (isHD ? 300 : 40); i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#882222' : '#451010';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 3 : 1, isHD ? 3 : 1);
-    }
-  });
-
-  // 23. Glowstone
-  blockTextures.glowstone = createPixelTexture(size, (ctx, s) => {
-    ctx.fillStyle = '#ca8a04';
-    ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < (isHD ? 250 : 35); i++) {
-      ctx.fillStyle = Math.random() > 0.6 ? '#fef08a' : Math.random() > 0.3 ? '#facc15' : '#854d0e';
-      ctx.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), isHD ? 4 : 2, isHD ? 4 : 2);
-    }
-  });
+  // Pre-prime common block textures
+  const common = [
+    'stone', 'dirt', 'grass', 'grass_block', 'cobblestone', 'oak_planks',
+    'oak_log', 'oak_leaves', 'glass', 'water', 'bedrock', 'sand',
+    'diamond_ore', 'gold_ore', 'iron_ore', 'coal_ore', 'obsidian',
+    'lava', 'crafting_table', 'furnace', 'wool', 'bookshelf', 'tnt',
+    'netherrack', 'glowstone', 'deepslate', 'granite', 'diorite', 'andesite'
+  ];
+  for (const b of common) {
+    getBlockTextureObj(b);
+  }
 }
 
 /**
- * Maps Minecraft Java Edition block names (from server packets or bot) to our client BlockType
+ * Maps Minecraft Java Edition block names from Mineflayer packets directly to clean block IDs
  */
 export function mapMinecraftBlock(rawName: string): BlockType {
-  if (!rawName) return 'stone';
-  const name = rawName.toLowerCase().replace('minecraft:', '').trim();
+  if (!rawName) return 'stone' as BlockType;
+  let name = rawName.toLowerCase().replace('minecraft:', '').trim();
 
-  if (name.includes('grass_block') || name === 'grass' || name.includes('podzol') || name.includes('mycelium')) return 'grass';
-  if (name.includes('dirt') || name.includes('mud') || name.includes('farmland') || name.includes('path')) return 'dirt';
-  if (name.includes('cobble') || name.includes('mossy_cobble')) return 'cobblestone';
-  if (name.includes('log') || name.includes('wood') || name.includes('stem')) return 'oak_log';
-  if (name.includes('leaves') || name.includes('vine') || name.includes('bush')) return 'oak_leaves';
-  if (name.includes('plank') || name.includes('slab') || name.includes('stair') || name.includes('fence') || name.includes('door') || name.includes('gate')) return 'oak_planks';
-  if (name.includes('crafting_table')) return 'crafting_table';
-  if (name.includes('furnace') || name.includes('smoker') || name.includes('blast_furnace')) return 'furnace';
-  if (name.includes('bookshelf')) return 'bookshelf';
-  if (name.includes('tnt')) return 'tnt';
-  if (name.includes('netherrack') || name.includes('crimson') || name.includes('warped_nylium')) return 'netherrack';
-  if (name.includes('glowstone') || name.includes('sea_lantern') || name.includes('shroomlight') || name.includes('lantern') || name.includes('torch')) return 'glowstone';
-  if (name.includes('wool') || name.includes('carpet') || name.includes('concrete') || name.includes('terracotta')) return 'wool';
-  if (name.includes('iron_block') || name.includes('iron') || name.includes('anvil')) return 'iron_block';
-  if (name.includes('gold_ore') || name.includes('copper_ore') || name.includes('iron_ore') || name.includes('coal_ore')) return 'gold_ore';
-  if (name.includes('diamond_ore') || name.includes('emerald_ore') || name.includes('lapis_ore')) return 'diamond_ore';
-  if (name.includes('diamond_block') || name.includes('emerald_block')) return 'diamond_ore';
-  if (name.includes('brick')) return 'bricks';
-  if (name.includes('glass')) return 'glass';
-  if (name.includes('water')) return 'water';
-  if (name.includes('lava')) return 'lava';
-  if (name.includes('bedrock') || name.includes('barrier') || name.includes('structure_void')) return 'bedrock';
-  if (name.includes('sand') || name.includes('gravel')) return 'sand';
-  if (name.includes('obsidian') || name.includes('crying_obsidian') || name.includes('respawn_anchor')) return 'obsidian';
-  if (name.includes('stone') || name.includes('deepslate') || name.includes('andesite') || name.includes('diorite') || name.includes('granite') || name.includes('calcite') || name.includes('tuff') || name.includes('basalt')) return 'stone';
+  // Strip state suffixes if present (e.g. grass_block[snowy=false] -> grass_block)
+  if (name.includes('[')) {
+    name = name.split('[')[0];
+  }
 
-  return 'stone';
+  if (name === 'grass') return 'grass_block' as BlockType;
+  return name as BlockType;
 }
-

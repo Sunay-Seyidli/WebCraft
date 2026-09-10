@@ -1354,12 +1354,12 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         const isSneaking = keys['ShiftLeft'];
         const isSprinting = !isSneaking && (keys['ControlLeft'] || keys['KeyR']);
         
-        let moveSpeed = 0.18;
-        if (isSprinting) moveSpeed = 0.28;
-        if (isSneaking) moveSpeed = 0.08;
+        let moveSpeed = 0.12; // Realistic Minecraft walking speed
+        if (isSprinting) moveSpeed = 0.17;
+        if (isSneaking) moveSpeed = 0.05;
 
-        let dx = 0;
-        let dz = 0;
+        let inputX = 0;
+        let inputZ = 0;
 
         const isForward = keys['KeyW'] || keys['ArrowUp'] || touchMoveRef.current.forward;
         const isBack = keys['KeyS'] || keys['ArrowDown'] || touchMoveRef.current.back;
@@ -1368,89 +1368,103 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         const isJump = keys['Space'] || touchMoveRef.current.jump;
 
         if (isForward) {
-          dx -= Math.sin(player.yaw) * moveSpeed;
-          dz -= Math.cos(player.yaw) * moveSpeed;
+          inputX -= Math.sin(player.yaw);
+          inputZ -= Math.cos(player.yaw);
         }
         if (isBack) {
-          dx += Math.sin(player.yaw) * moveSpeed;
-          dz += Math.cos(player.yaw) * moveSpeed;
+          inputX += Math.sin(player.yaw);
+          inputZ += Math.cos(player.yaw);
         }
         if (isLeft) {
-          dx -= Math.cos(player.yaw) * moveSpeed;
-          dz += Math.sin(player.yaw) * moveSpeed;
+          inputX -= Math.cos(player.yaw);
+          inputZ += Math.sin(player.yaw);
         }
         if (isRight) {
-          dx += Math.cos(player.yaw) * moveSpeed;
-          dz += Math.sin(player.yaw) * moveSpeed;
+          inputX += Math.cos(player.yaw);
+          inputZ -= Math.sin(player.yaw);
         }
 
-        // Horizontal movement collision check & auto-step
-        let nextX = player.x + dx;
-        let nextZ = player.z + dz;
+        const len = Math.sqrt(inputX * inputX + inputZ * inputZ);
+        if (len > 0) {
+          inputX = (inputX / len) * moveSpeed;
+          inputZ = (inputZ / len) * moveSpeed;
+        }
 
-        // Ultra-Fast Voxel Ground Detection (Fast path: center under feet first, avoids 60 string allocations per frame)
-        let groundY = -999;
-        const centerFloorX = Math.floor(player.x);
-        const centerFloorZ = Math.floor(player.z);
-        const playerFloorY = Math.floor(player.y);
+        // 1. Gravity & Vertical Collision
+        player.vy -= 0.018; // Standard Minecraft gravity
+        if (player.vy < -0.5) player.vy = -0.5; // Terminal velocity
 
-        if (blocksMap.has(`${centerFloorX},${playerFloorY - 1},${centerFloorZ}`)) {
-          groundY = playerFloorY;
-        } else if (blocksMap.has(`${centerFloorX},${playerFloorY},${centerFloorZ}`)) {
-          groundY = playerFloorY + 1.0;
-        } else {
-          // Check corner offsets only if player is near block edge
-          const offsets = [-0.28, 0.28];
-          for (let by = playerFloorY; by >= playerFloorY - 3; by--) {
-            let foundSolid = false;
-            for (const ox of offsets) {
-              for (const oz of offsets) {
-                const testX = Math.floor(player.x + ox);
-                const testZ = Math.floor(player.z + oz);
-                if (blocksMap.has(`${testX},${by},${testZ}`)) {
-                  groundY = by + 1.0;
-                  foundSolid = true;
-                  break;
+        let verticalTargetY = player.y + player.vy;
+        let isOnGround = false;
+
+        // Find highest solid block level under player's feet bounding box
+        let highestSolidY = -999;
+        const offsets = [-0.28, 0, 0.28];
+        const searchMinY = Math.floor(player.y - 1.2);
+        const searchMaxY = Math.floor(player.y + 0.2);
+
+        for (const ox of offsets) {
+          for (const oz of offsets) {
+            const bx = Math.floor(player.x + ox);
+            const bz = Math.floor(player.z + oz);
+            for (let by = searchMaxY; by >= searchMinY; by--) {
+              if (blocksMap.has(`${bx},${by},${bz}`)) {
+                const topOfBlock = by + 1.0;
+                if (topOfBlock > highestSolidY) {
+                  highestSolidY = topOfBlock;
                 }
+                break;
               }
-              if (foundSolid) break;
             }
-            if (foundSolid) break;
           }
         }
 
-        let isOnGround = false;
-        if (groundY !== -999 && (player.y + player.vy <= groundY + 0.18) && (player.y >= groundY - 0.5)) {
-          player.y = groundY;
+        if (highestSolidY !== -999 && verticalTargetY <= highestSolidY + 0.05 && player.y >= highestSolidY - 0.3) {
+          player.y = highestSolidY;
           player.vy = 0;
           isOnGround = true;
-        } else if (!serverLoading) {
-          player.y += player.vy;
-          player.vy -= player.gravity;
-          if (player.y < -64) {
-            // Void limit
-            player.y = -64;
-            player.vy = 0;
-          }
+        } else {
+          player.y = verticalTargetY;
         }
 
-        // Minecraft Sneak Edge Protection: Prevent walking off block edge if holding Shift on ground!
+        // Void Safety: Respawn if fallen into void (< -30) or invalid position NaN
+        if (isNaN(player.x) || isNaN(player.y) || isNaN(player.z) || player.y < -30) {
+          player.x = 0;
+          player.y = server ? 70 : 15;
+          player.z = 0;
+          player.vy = 0;
+          soundManager.playHurt();
+          addChatMessage('Sistem', 'Boşluğa düştün! Başlangıç noktasına güvenle ışınlandın.', true);
+        }
+
+        // Jump (Standard Minecraft Jump Force = 0.25)
+        if (isJump && isOnGround) {
+          player.vy = 0.25;
+          isOnGround = false;
+          const feetBlock = blocksMap.get(`${Math.floor(player.x)},${Math.floor(player.y - 0.1)},${Math.floor(player.z)}`);
+          soundManager.playFootstep(feetBlock ? feetBlock.type : 'stone');
+        }
+
+        // 2. Horizontal Movement & Edge Sneaking
+        let nextX = player.x + inputX;
+        let nextZ = player.z + inputZ;
+
+        // Minecraft Sneak Ledge Protection
         if (isSneaking && isOnGround) {
           const checkNextX = Math.floor(nextX);
           const checkNextZ = Math.floor(nextZ);
           const feetBlockY = Math.floor(player.y - 0.1);
-          const hasBlockBelowNext = blocksMap.has(`${checkNextX},${feetBlockY},${checkNextZ}`);
-          if (!hasBlockBelowNext && blocksMap.size > 0) {
-            // Cancel movement off the cliff edge
+          if (!blocksMap.has(`${checkNextX},${feetBlockY},${checkNextZ}`) && blocksMap.size > 0) {
             nextX = player.x;
             nextZ = player.z;
           }
         }
 
-        // Auto-step: if moving into a 1-block elevation, check if can step up
+        // Wall collision & Smooth Auto-step
         const testX = Math.floor(nextX);
         const testZ = Math.floor(nextZ);
         const feetY = Math.floor(player.y);
+
         const isBlockAtFeet = blocksMap.has(`${testX},${feetY},${testZ}`);
         const isBlockAtHead = blocksMap.has(`${testX},${feetY + 1},${testZ}`);
 
@@ -1465,10 +1479,10 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
           player.z = nextZ;
         }
 
-        // Jumping
-        if (isJump && isOnGround) {
-          player.vy = player.jumpForce;
-          soundManager.playFootstep();
+        // Footstep Sound Trigger when walking on ground
+        if (isOnGround && (Math.abs(inputX) > 0.001 || Math.abs(inputZ) > 0.001)) {
+          const feetBlock = blocksMap.get(`${Math.floor(player.x)},${Math.floor(player.y - 0.1)},${Math.floor(player.z)}`);
+          soundManager.playFootstep(feetBlock ? feetBlock.type : 'stone');
         }
 
         // Camera position & look (Eye level: 1.62m standard, 1.35m crouched)
