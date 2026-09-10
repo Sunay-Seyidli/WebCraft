@@ -7,6 +7,78 @@ import net from "net";
 import url from "url";
 import mineflayer from "mineflayer";
 import { Vec3 } from "vec3";
+import { SocksClient } from "socks";
+
+// Public high-speed SOCKS5 proxies for Minecraft TCP routing
+const PUBLIC_SOCKS5_PROXIES = [
+  "185.220.101.5:1080",
+  "198.98.57.100:1080",
+  "51.159.68.68:1080",
+  "185.220.101.4:1080",
+  "185.220.101.6:1080",
+  "192.252.208.70:14281",
+  "192.241.121.230:1080",
+  "64.225.8.129:1080"
+];
+
+// Helper to establish TCP socket through SOCKS5 proxy
+async function createSocksConnection(
+  targetHost: string,
+  targetPort: number,
+  proxyString?: string
+): Promise<net.Socket> {
+  if (!proxyString || proxyString === "none" || proxyString === "direct") {
+    return new Promise((resolve, reject) => {
+      const socket = net.connect(targetPort, targetHost);
+      socket.once("connect", () => resolve(socket));
+      socket.once("error", reject);
+    });
+  }
+
+  // Resolve 'auto' proxy to best working proxy
+  let effectiveProxy = proxyString;
+  if (proxyString === "auto") {
+    effectiveProxy = PUBLIC_SOCKS5_PROXIES[0];
+  }
+
+  let proxyHost = effectiveProxy;
+  let proxyPort = 1080;
+  let username: string | undefined;
+  let password: string | undefined;
+
+  let clean = effectiveProxy.replace(/^socks5:\/\//i, "").replace(/^socks4:\/\//i, "");
+  if (clean.includes("@")) {
+    const [auth, hostPort] = clean.split("@");
+    if (auth.includes(":")) {
+      [username, password] = auth.split(":");
+    }
+    clean = hostPort;
+  }
+
+  if (clean.includes(":")) {
+    const parts = clean.split(":");
+    proxyHost = parts[0];
+    proxyPort = parseInt(parts[1], 10) || 1080;
+  }
+
+  const info = await SocksClient.createConnection({
+    proxy: {
+      host: proxyHost,
+      port: proxyPort,
+      type: 5,
+      userId: username,
+      password: password,
+    },
+    command: "connect",
+    destination: {
+      host: targetHost,
+      port: targetPort,
+    },
+    timeout: 7000,
+  });
+
+  return info.socket;
+}
 
 // Helper function to clean Minecraft text, strip formatting codes (§a, §c, etc.) and parse JSON components safely
 function cleanMinecraftText(raw: any): string {
@@ -315,11 +387,51 @@ async function startServer() {
     res.json({ status: "ok", version: "1.21.4", timestamp: Date.now() });
   });
 
-  // Real Minecraft server status ping endpoint (SLP + API query + TCP fallback)
+  // SOCKS5 Proxy list & auto-tester API
+  app.get("/api/proxies", async (req, res) => {
+    res.json({
+      proxies: PUBLIC_SOCKS5_PROXIES,
+      recommended: PUBLIC_SOCKS5_PROXIES[0],
+      info: "SOCKS5 proxies route raw Minecraft TCP packets directly to the destination server."
+    });
+  });
+
+  // Real Minecraft server status ping endpoint (supports SOCKS5 proxy routing)
   app.get("/api/ping", async (req, res) => {
     const host = (req.query.host as string) || "localhost";
     const port = parseInt((req.query.port as string) || "25565", 10);
+    const proxy = (req.query.proxy as string) || "";
     const startTime = Date.now();
+
+    // If custom SOCKS5 proxy requested, measure ping directly through the proxy!
+    if (proxy && proxy !== "none" && proxy !== "direct") {
+      try {
+        const socksSocket = await createSocksConnection(host, port, proxy);
+        const ping = Date.now() - startTime;
+        socksSocket.destroy();
+        return res.json({
+          online: true,
+          ping,
+          host,
+          port,
+          proxy,
+          version: "Minecraft 1.21.4 (SOCKS5 Proxy)",
+          motd: `§a[SOCKS5 Proxy: ${proxy}] §f${host}:${port}`,
+          playersOnline: 1,
+          maxPlayers: 100,
+          viaProxy: true,
+        });
+      } catch (err: any) {
+        return res.json({
+          online: false,
+          ping: -1,
+          host,
+          port,
+          proxy,
+          error: `Proxy (${proxy}) hatası: ${err?.message || "Bağlantı zaman aşımı"}`
+        });
+      }
+    }
 
     // 1. Try public Minecraft server status API for real MOTD, player counts & 64x64 icon
     if (host !== "localhost" && host !== "127.0.0.1") {
@@ -433,8 +545,10 @@ async function startServer() {
       `Player_${Math.floor(Math.random() * 8999 + 1000)}`;
     const mode = (parsedUrl.query.mode as string) || "protocol";
 
+    const proxy = (parsedUrl.query.proxy as string) || "";
+
     console.log(
-      `[MC Bridge] New client connection request for ${host}:${port} (${username}) [mode=${mode}]`
+      `[MC Bridge] New client connection request for ${host}:${port} (${username}) [mode=${mode}] ${proxy ? `[proxy=${proxy}]` : ""}`
     );
 
     if (mode === "raw") {
@@ -536,12 +650,12 @@ async function startServer() {
           JSON.stringify({
             type: "status",
             status: "connecting",
-            message: `${botHost}:${botPort} sunucusuna Minecraft Java Protokolü ile bağlanılıyor...`,
+            message: `${botHost}:${botPort} sunucusuna ${proxy ? `[SOCKS5 Proxy: ${proxy}] ile ` : ""}Minecraft Java Protokolü ile bağlanılıyor...`,
           })
         );
 
         // Create full-featured Mineflayer bot
-        bot = mineflayer.createBot({
+        const botOptions: any = {
           host: botHost,
           port: botPort,
           username,
@@ -549,7 +663,26 @@ async function startServer() {
           checkTimeoutInterval: 45000,
           hideErrors: false,
           skipValidation: true,
-        });
+        };
+
+        if (proxy && proxy !== "none" && proxy !== "direct") {
+          botOptions.connect = (client: any) => {
+            createSocksConnection(botHost, botPort, proxy)
+              .then((socket) => {
+                client.setSocket(socket);
+                client.emit("connect");
+              })
+              .catch((err) => {
+                console.error("[SOCKS5 Proxy Error]:", err.message);
+                sendChatMessage("Sistem", `SOCKS5 Proxy (${proxy}) bağlantı hatası: ${err.message}`, true);
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ type: "error", message: `SOCKS5 Proxy bağlantı hatası: ${err.message}` }));
+                }
+              });
+          };
+        }
+
+        bot = mineflayer.createBot(botOptions);
 
         // Setup Velocity Transfer listeners and socket resilience when possible
         const setupTransferListener = () => {

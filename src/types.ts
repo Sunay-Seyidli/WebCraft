@@ -34,6 +34,7 @@ export interface ServerInfo {
   ping?: number;
   online?: boolean;
   icon?: string;
+  proxy?: string; // SOCKS5 proxy IP:Port or 'auto'
 }
 
 export interface GameSettings {

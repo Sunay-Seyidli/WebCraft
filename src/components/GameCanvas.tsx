@@ -1130,9 +1130,14 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       }
 
       if (!pausedRef.current && !inventoryOpenRef.current && !chatOpenRef.current) {
-        // Boosted base speed (0.18) and added Sprinting speed boost (0.28) for super snappy controls!
-        const isSprinting = keys['ControlLeft'] || keys['ShiftLeft'] || keys['KeyR'];
-        const moveSpeed = isSprinting ? 0.28 : 0.18;
+        // Minecraft Shift (Sneak/Crouch) vs Ctrl/R (Sprint) controls
+        const isSneaking = keys['ShiftLeft'];
+        const isSprinting = !isSneaking && (keys['ControlLeft'] || keys['KeyR']);
+        
+        let moveSpeed = 0.18;
+        if (isSprinting) moveSpeed = 0.28;
+        if (isSneaking) moveSpeed = 0.08;
+
         let dx = 0;
         let dz = 0;
 
@@ -1160,26 +1165,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         }
 
         // Horizontal movement collision check & auto-step
-        const nextX = player.x + dx;
-        const nextZ = player.z + dz;
-
-        // Auto-step: if moving into a 1-block elevation, check if can step up
-        const testX = Math.round(nextX);
-        const testZ = Math.round(nextZ);
-        const feetY = Math.round(player.y);
-        const isBlockAtFeet = blocksMap.has(`${testX},${feetY},${testZ}`);
-        const isBlockAtHead = blocksMap.has(`${testX},${feetY + 1},${testZ}`);
-
-        if (isBlockAtFeet && !isBlockAtHead) {
-          // Step up 1 block smoothly
-          player.y = feetY + 0.5;
-          player.vy = 0;
-          player.x = nextX;
-          player.z = nextZ;
-        } else if (!isBlockAtFeet) {
-          player.x = nextX;
-          player.z = nextZ;
-        }
+        let nextX = player.x + dx;
+        let nextZ = player.z + dz;
 
         // Voxel Ground Detection & Gravity
         let groundY = -999;
@@ -1208,14 +1195,46 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
           }
         }
 
+        // Minecraft Sneak Edge Protection: Prevent walking off block edge if holding Shift on ground!
+        if (isSneaking && isOnGround) {
+          const checkNextX = Math.round(nextX);
+          const checkNextZ = Math.round(nextZ);
+          const feetY = Math.round(player.y);
+          const hasBlockBelowNext = blocksMap.has(`${checkNextX},${feetY - 1},${checkNextZ}`) || blocksMap.has(`${checkNextX},${feetY},${checkNextZ}`);
+          if (!hasBlockBelowNext && blocksMap.size > 0) {
+            // Cancel movement off the cliff edge
+            nextX = player.x;
+            nextZ = player.z;
+          }
+        }
+
+        // Auto-step: if moving into a 1-block elevation, check if can step up
+        const testX = Math.round(nextX);
+        const testZ = Math.round(nextZ);
+        const feetY = Math.round(player.y);
+        const isBlockAtFeet = blocksMap.has(`${testX},${feetY},${testZ}`);
+        const isBlockAtHead = blocksMap.has(`${testX},${feetY + 1},${testZ}`);
+
+        if (isBlockAtFeet && !isBlockAtHead) {
+          // Step up 1 block smoothly
+          player.y = feetY + 0.5;
+          player.vy = 0;
+          player.x = nextX;
+          player.z = nextZ;
+        } else if (!isBlockAtFeet) {
+          player.x = nextX;
+          player.z = nextZ;
+        }
+
         // Jumping
         if (isJump && isOnGround) {
           player.vy = player.jumpForce;
           soundManager.playFootstep();
         }
 
-        // Camera position & look (eye level is 1.62m above feet)
-        camera.position.set(player.x, player.y + 1.62, player.z);
+        // Camera position & look (Eye level: 1.62m standard, 1.35m crouched)
+        const eyeHeight = isSneaking ? 1.35 : 1.62;
+        camera.position.set(player.x, player.y + eyeHeight, player.z);
 
         const targetX = camera.position.x - Math.sin(player.yaw) * Math.cos(player.pitch);
         const targetY = camera.position.y + Math.sin(player.pitch);

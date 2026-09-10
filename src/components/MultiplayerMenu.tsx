@@ -68,12 +68,15 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
   // Form states for adding a server
   const [newServerName, setNewServerName] = useState('Minecraft Sunucum');
   const [newServerAddress, setNewServerAddress] = useState('');
+  const [newServerProxy, setNewServerProxy] = useState('auto');
   const [directAddress, setDirectAddress] = useState('localhost:25565');
+  const [directProxy, setDirectProxy] = useState('auto');
 
-  // Ping a specific server
+  // Ping a specific server (including custom SOCKS5 proxy)
   const pingServer = async (srv: ServerInfo): Promise<ServerInfo> => {
     try {
-      const res = await fetch(`/api/ping?host=${encodeURIComponent(srv.ip)}&port=${srv.port}`);
+      const proxyParam = srv.proxy ? `&proxy=${encodeURIComponent(srv.proxy)}` : '';
+      const res = await fetch(`/api/ping?host=${encodeURIComponent(srv.ip)}&port=${srv.port}${proxyParam}`);
       if (!res.ok) throw new Error('Ping failed');
       const data = await res.json();
       return {
@@ -135,6 +138,7 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
       name: newServerName.trim() || host,
       ip: host,
       port: isNaN(port) ? 25565 : port,
+      proxy: newServerProxy.trim() || 'auto',
       motd: 'Sunucu aranıyor...',
       version: '1.21.4',
       playersOnline: 0,
@@ -283,10 +287,14 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
                     {s.motd ? s.motd.replace(/§[0-9a-fk-or]/gi, '') : 'Minecraft Sunucusu'}
                   </div>
 
-                  <div className="text-xs sm:text-sm text-yellow-400/90 font-mono flex items-center gap-2">
+                  <div className="text-xs sm:text-sm text-yellow-400/90 font-mono flex items-center gap-2 flex-wrap">
                     <span>{s.ip}:{s.port}</span>
                     <span className="text-gray-400">•</span>
                     <span className="text-gray-300">{s.version}</span>
+                    <span className="text-gray-400">•</span>
+                    <span className="text-cyan-300 bg-cyan-950/80 border border-cyan-600/80 px-1.5 py-0.5 rounded text-[11px] font-mono flex items-center gap-1">
+                      🛡️ Proxy: {s.proxy || 'auto'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -430,11 +438,24 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
                 className="bg-black border-2 border-gray-600 px-3 py-2 text-xl sm:text-2xl text-white outline-none focus:border-yellow-400 font-mono rounded"
                 placeholder="example.com veya 192.168.1.100:25565"
               />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-cyan-300 text-base sm:text-lg font-bold flex items-center gap-1.5">
+                🛡️ SOCKS5 Proxy Ayarı (IP:Port):
+              </label>
+              <input
+                type="text"
+                value={newServerProxy}
+                onChange={(e) => setNewServerProxy(e.target.value)}
+                className="bg-black border-2 border-cyan-600/80 px-3 py-2 text-xl sm:text-2xl text-cyan-200 outline-none focus:border-cyan-400 font-mono rounded"
+                placeholder="auto veya 185.220.101.5:1080"
+              />
               <span className="text-xs text-gray-400">
-                ⚠️ Sadece <span className="font-bold">OFFLINE-MODE</span> Minecraft Java 1.21.x sunuculara bağlanabilir.
+                • <span className="text-cyan-300 font-bold">socks5</span> kullanılması zorunludur (Minecraft ham TCP paketleri gönderir).
               </span>
               <span className="text-xs text-amber-300">
-                Örnek: Kendi/arkadaş sunucusu, Paper/Spigot offline-mode, vb.
+                • Ping bu proxy üzerinden ölçülecektir. Hızlı sunucu için 'auto' bırakabilirsiniz.
               </span>
             </div>
 
@@ -492,6 +513,18 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
               placeholder="localhost:25565 veya example.com"
               autoFocus
             />
+            <div className="flex flex-col gap-1">
+              <label className="text-cyan-300 text-xs sm:text-sm font-bold flex items-center gap-1">
+                🛡️ SOCKS5 Proxy (IP:Port):
+              </label>
+              <input
+                type="text"
+                value={directProxy}
+                onChange={(e) => setDirectProxy(e.target.value)}
+                className="bg-black border-2 border-cyan-600 px-3 py-1.5 text-lg text-cyan-200 outline-none focus:border-cyan-400 font-mono rounded"
+                placeholder="auto veya ip:port"
+              />
+            </div>
             <div className="flex gap-3 sm:gap-4 mt-2">
               <button
                 onClick={() => {
@@ -506,6 +539,7 @@ export function MultiplayerMenu({ onNavigate, onJoinServer }: MultiplayerMenuPro
                     name: host,
                     ip: host,
                     port: isNaN(port) ? 25565 : port,
+                    proxy: directProxy.trim() || 'auto',
                     motd: 'Doğrudan Bağlantı',
                     version: '1.21.4',
                     playersOnline: 1,
