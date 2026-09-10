@@ -140,6 +140,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   const [targetedBlock, setTargetedBlock] = useState<TargetedBlockData | null>(null);
   const [disconnectedReason, setDisconnectedReason] = useState<string | null>(null);
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
+  const [playerUsername, setPlayerUsername] = useState<string>(() => {
+    return (localStorage.getItem('mc_player_username')?.trim() || settings.playerName?.trim() || activeSettings.playerName?.trim() || 'Steve').replace(/[^a-zA-Z0-9_]/g, '');
+  });
 
   const lastActionTimeRef = useRef<number>(0);
 
@@ -438,7 +441,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
       const materials = getMaterialsForBlock(type);
       const mesh = new THREE.Mesh(boxGeometry, materials);
-      mesh.position.set(x, y, z);
+      mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
       mesh.userData = { type, x, y, z };
       scene.add(mesh);
       blocksMap.set(key, mesh);
@@ -580,13 +583,16 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         const hit = intersects[0];
         const mesh = hit.object as THREE.Mesh;
         const bType = (mesh.userData.type as BlockType) || 'stone';
+        const bx = typeof mesh.userData.x === 'number' ? mesh.userData.x : Math.floor(mesh.position.x);
+        const by = typeof mesh.userData.y === 'number' ? mesh.userData.y : Math.floor(mesh.position.y);
+        const bz = typeof mesh.userData.z === 'number' ? mesh.userData.z : Math.floor(mesh.position.z);
         return {
           mesh,
           type: bType,
           name: BLOCK_NAMES[bType] || bType,
-          x: Math.round(mesh.position.x),
-          y: Math.round(mesh.position.y),
-          z: Math.round(mesh.position.z),
+          x: bx,
+          y: by,
+          z: bz,
           distance: hit.distance,
           faceNormal: hit.face.normal.clone(),
           isBedrock: bType === 'bedrock'
@@ -599,12 +605,12 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     const performBreak = () => {
       if (pausedRef.current || inventoryOpenRef.current || chatOpenRef.current) return;
       const now = performance.now();
-      if (now - lastActionTimeRef.current < 220) return;
+      if (now - lastActionTimeRef.current < 200) return;
       lastActionTimeRef.current = now;
 
       triggerHandSwing();
 
-      // Check if clicking an entity (mob/player attack)
+      // Check if clicking an entity (mob/player/NPC attack)
       if (entitiesMapRef.current) {
         const ray = new THREE.Raycaster();
         const dir = new THREE.Vector3();
@@ -621,11 +627,19 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
         const hits = ray.intersectObjects(entityMeshes, true);
         if (hits.length > 0) {
-          let rootGroup = hits[0].object;
-          while (rootGroup.parent && !entityIdMap.has(rootGroup)) {
+          let rootGroup: THREE.Object3D | null = hits[0].object;
+          let eId = rootGroup.userData?.entityId;
+          while (rootGroup && eId === undefined) {
+            if (entityIdMap.has(rootGroup)) {
+              eId = entityIdMap.get(rootGroup);
+              break;
+            }
             rootGroup = rootGroup.parent;
+            if (rootGroup?.userData?.entityId !== undefined) {
+              eId = rootGroup.userData.entityId;
+              break;
+            }
           }
-          const eId = entityIdMap.get(rootGroup);
           if (eId !== undefined && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             soundManager.playClick();
             wsRef.current.send(JSON.stringify({ type: 'attackEntity', entityId: eId }));
@@ -645,7 +659,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
       if (!server) {
         // Singleplayer: execute immediately
-        spawnBlockParticles(target.x, target.y, target.z, target.type);
+        spawnBlockParticles(target.x + 0.5, target.y + 0.5, target.z + 0.5, target.type);
         const key = `${target.x},${target.y},${target.z}`;
         scene.remove(target.mesh);
         target.mesh.geometry.dispose();
@@ -667,9 +681,15 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         });
         highlightBox.visible = false;
       } else {
-        // Multiplayer: Send to server + optimistic audio feedback
+        // Multiplayer: Optimistic local removal + sound + particles + send dig packet
         soundManager.playDig(target.type);
-        spawnBlockParticles(target.x, target.y, target.z, target.type);
+        spawnBlockParticles(target.x + 0.5, target.y + 0.5, target.z + 0.5, target.type);
+        const key = `${target.x},${target.y},${target.z}`;
+        scene.remove(target.mesh);
+        target.mesh.geometry.dispose();
+        blocksMap.delete(key);
+        highlightBox.visible = false;
+
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(
             JSON.stringify({
@@ -687,12 +707,12 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     const performPlace = () => {
       if (pausedRef.current || inventoryOpenRef.current || chatOpenRef.current) return;
       const now = performance.now();
-      if (now - lastActionTimeRef.current < 220) return;
+      if (now - lastActionTimeRef.current < 200) return;
       lastActionTimeRef.current = now;
 
       triggerHandSwing();
 
-      // Check if right clicking an entity
+      // Check if right clicking an entity (interact / NPC dialogue / villager trade)
       if (entitiesMapRef.current) {
         const ray = new THREE.Raycaster();
         const dir = new THREE.Vector3();
@@ -709,11 +729,19 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
         const hits = ray.intersectObjects(entityMeshes, true);
         if (hits.length > 0) {
-          let rootGroup = hits[0].object;
-          while (rootGroup.parent && !entityIdMap.has(rootGroup)) {
+          let rootGroup: THREE.Object3D | null = hits[0].object;
+          let eId = rootGroup.userData?.entityId;
+          while (rootGroup && eId === undefined) {
+            if (entityIdMap.has(rootGroup)) {
+              eId = entityIdMap.get(rootGroup);
+              break;
+            }
             rootGroup = rootGroup.parent;
+            if (rootGroup?.userData?.entityId !== undefined) {
+              eId = rootGroup.userData.entityId;
+              break;
+            }
           }
-          const eId = entityIdMap.get(rootGroup);
           if (eId !== undefined && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             soundManager.playClick();
             wsRef.current.send(JSON.stringify({ type: 'useEntity', entityId: eId }));
@@ -733,25 +761,18 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         return;
       }
 
-      const placeX = Math.round(target.x + target.faceNormal.x);
-      const placeY = Math.round(target.y + target.faceNormal.y);
-      const placeZ = Math.round(target.z + target.faceNormal.z);
+      const placeX = target.x + Math.round(target.faceNormal.x);
+      const placeY = target.y + Math.round(target.faceNormal.y);
+      const placeZ = target.z + Math.round(target.faceNormal.z);
 
       // Prevent placing inside player body
-      const playerMinX = player.x - 0.45;
-      const playerMaxX = player.x + 0.45;
-      const playerMinZ = player.z - 0.45;
-      const playerMaxZ = player.z + 0.45;
-      const playerMinY = player.y - 0.2;
-      const playerMaxY = player.y + 1.8;
-
       const insidePlayer =
-        playerMaxX > placeX - 0.5 &&
-        playerMinX < placeX + 0.5 &&
-        playerMaxZ > placeZ - 0.5 &&
-        playerMinZ < placeZ + 0.5 &&
-        playerMaxY > placeY - 0.5 &&
-        playerMinY < placeY + 0.5;
+        player.x + 0.35 > placeX &&
+        player.x - 0.35 < placeX + 1 &&
+        player.z + 0.35 > placeZ &&
+        player.z - 0.35 < placeZ + 1 &&
+        player.y + 1.8 > placeY &&
+        player.y < placeY + 1;
 
       if (insidePlayer) return;
 
@@ -770,8 +791,16 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
           return updated;
         });
       } else {
-        // Multiplayer: Send place command + optimistic audio feedback
+        // Multiplayer: Optimistic local placement + send place packet
+        addBlockAt(placeX, placeY, placeZ, currentItem.type);
         soundManager.playDig(currentItem.type);
+        setHotbar((prev) => {
+          const updated = [...prev];
+          if (updated[activeSlot] && updated[activeSlot].count > 0) {
+            updated[activeSlot] = { ...updated[activeSlot], count: updated[activeSlot].count - 1 };
+          }
+          return updated;
+        });
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(
             JSON.stringify({
@@ -883,7 +912,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     // Connect WebSocket Minecraft Java Protocol Bridge if server is specified
     if (server) {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const chosenPlayerName = (settings.playerName?.trim() || activeSettings.playerName?.trim() || localStorage.getItem('mc_player_username') || 'Steve').replace(/[^a-zA-Z0-9_]/g, '');
+      const chosenPlayerName = (playerUsername.trim() || localStorage.getItem('mc_player_username')?.trim() || settings.playerName?.trim() || activeSettings.playerName?.trim() || 'Steve').replace(/[^a-zA-Z0-9_]/g, '');
       const wsUrl = `${wsProtocol}//${window.location.host}/ws-proxy?host=${encodeURIComponent(server.ip)}&port=${server.port}&username=${encodeURIComponent(chosenPlayerName || 'Steve')}&mode=protocol`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
@@ -1173,14 +1202,15 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         // Voxel Ground Detection & Gravity (Bounding Box overlap for perfect alignment without slipping off blocks)
         let groundY = -999;
         const offsets = [-0.3, 0, 0.3];
-        for (let by = Math.ceil(player.y + 0.5); by >= Math.floor(player.y) - 6; by--) {
+        const playerFloorY = Math.floor(player.y);
+        for (let by = playerFloorY; by >= playerFloorY - 6; by--) {
           let foundSolid = false;
           for (const ox of offsets) {
             for (const oz of offsets) {
-              const testX = Math.round(player.x + ox);
-              const testZ = Math.round(player.z + oz);
+              const testX = Math.floor(player.x + ox);
+              const testZ = Math.floor(player.z + oz);
               if (blocksMap.has(`${testX},${by},${testZ}`)) {
-                groundY = by + 0.5;
+                groundY = by + 1.0;
                 foundSolid = true;
                 break;
               }
@@ -1191,7 +1221,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         }
 
         let isOnGround = false;
-        if (groundY !== -999 && (player.y + player.vy <= groundY + 0.15)) {
+        if (groundY !== -999 && (player.y + player.vy <= groundY + 0.18) && (player.y >= groundY - 0.5)) {
           player.y = groundY;
           player.vy = 0;
           isOnGround = true;
@@ -1207,10 +1237,10 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
         // Minecraft Sneak Edge Protection: Prevent walking off block edge if holding Shift on ground!
         if (isSneaking && isOnGround) {
-          const checkNextX = Math.round(nextX);
-          const checkNextZ = Math.round(nextZ);
-          const feetY = Math.round(player.y);
-          const hasBlockBelowNext = blocksMap.has(`${checkNextX},${feetY - 1},${checkNextZ}`) || blocksMap.has(`${checkNextX},${feetY},${checkNextZ}`);
+          const checkNextX = Math.floor(nextX);
+          const checkNextZ = Math.floor(nextZ);
+          const feetBlockY = Math.floor(player.y - 0.1);
+          const hasBlockBelowNext = blocksMap.has(`${checkNextX},${feetBlockY},${checkNextZ}`);
           if (!hasBlockBelowNext && blocksMap.size > 0) {
             // Cancel movement off the cliff edge
             nextX = player.x;
@@ -1219,15 +1249,15 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         }
 
         // Auto-step: if moving into a 1-block elevation, check if can step up
-        const testX = Math.round(nextX);
-        const testZ = Math.round(nextZ);
-        const feetY = Math.round(player.y);
+        const testX = Math.floor(nextX);
+        const testZ = Math.floor(nextZ);
+        const feetY = Math.floor(player.y);
         const isBlockAtFeet = blocksMap.has(`${testX},${feetY},${testZ}`);
         const isBlockAtHead = blocksMap.has(`${testX},${feetY + 1},${testZ}`);
 
-        if (isBlockAtFeet && !isBlockAtHead) {
+        if (isBlockAtFeet && !isBlockAtHead && isOnGround) {
           // Step up 1 block smoothly
-          player.y = feetY + 0.5;
+          player.y = feetY + 1.0;
           player.vy = 0;
           player.x = nextX;
           player.z = nextZ;
@@ -1278,7 +1308,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         const target = getRaycastTarget();
         if (target) {
           highlightBox.visible = true;
-          highlightBox.position.set(target.x, target.y, target.z);
+          highlightBox.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
 
           const currentKey = `${target.x},${target.y},${target.z},${target.type}`;
           if (currentKey !== lastTargetKey) {
@@ -1996,19 +2026,43 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                 >
                   🔄 Chunkları Yenile
                 </button>
-                <button
-                  onClick={() => {
-                    soundManager.playClick();
-                    setServerLoading(true);
-                    setServerStatusText('Yeniden bağlanılıyor...');
-                    setDisconnectedReason(null);
-                    setPaused(false);
-                    setReconnectTrigger(prev => prev + 1);
-                  }}
-                  className="py-2.5 sm:py-3 bg-[#0d9488] hover:bg-[#14b8a6] text-white border-2 border-t-[#2dd4bf] border-l-[#2dd4bf] border-b-[#115e59] border-r-[#115e59] text-xl sm:text-2xl font-bold"
-                >
-                  🔌 Yeniden Bağlan (Reconnect)
-                </button>
+                {/* Quick Nickname Edit for Multiplayer in ESC Menu */}
+                {server && (
+                  <div className="flex flex-col gap-1 bg-black/60 border border-yellow-500/70 p-2.5 rounded text-left">
+                    <div className="flex items-center justify-between text-xs text-yellow-300 font-bold">
+                      <span>👤 Oyuncu Adı (Nickname):</span>
+                      <span className="text-emerald-400 text-[10px]">İsmi değiştirip yeniden bağlanın</span>
+                    </div>
+                    <input
+                      type="text"
+                      maxLength={16}
+                      value={playerUsername}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 16);
+                        setPlayerUsername(val);
+                        localStorage.setItem('mc_player_username', val);
+                      }}
+                      placeholder="Oyuncu Adı"
+                      className="bg-black/90 border border-yellow-500/80 focus:border-yellow-400 px-2.5 py-1.5 text-white text-xl font-mono rounded outline-none w-full shadow-inner"
+                    />
+                  </div>
+                )}
+                {server && (
+                  <button
+                    onClick={() => {
+                      soundManager.playClick();
+                      setServerLoading(true);
+                      setServerStatusText('Yeniden bağlanılıyor...');
+                      setDisconnectedReason(null);
+                      setPaused(false);
+                      setReconnectTrigger((prev) => prev + 1);
+                    }}
+                    className="py-2.5 sm:py-3 bg-[#0d9488] hover:bg-[#14b8a6] active:bg-[#0f766e] text-white border-2 border-t-[#2dd4bf] border-l-[#2dd4bf] border-b-[#115e59] border-r-[#115e59] text-xl sm:text-2xl font-bold flex items-center justify-center gap-2 shadow-lg"
+                  >
+                    <span>🔌</span>
+                    <span>Yeniden Bağlan (Reconnect)</span>
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     soundManager.playClick();
@@ -2197,6 +2251,25 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
             </div>
             <div className="bg-black/70 border border-gray-700 p-4 text-xl sm:text-2xl text-yellow-200 whitespace-pre-wrap font-mono">
               {disconnectedReason}
+            </div>
+            {/* Quick Nickname Change on Disconnect */}
+            <div className="flex flex-col gap-1 bg-black/60 border border-yellow-500/70 p-2.5 rounded text-left">
+              <div className="flex items-center justify-between text-xs text-yellow-300 font-bold font-mono">
+                <span>👤 Oyuncu Adı (Nickname):</span>
+                <span className="text-emerald-400 text-[10px]">İsmi değiştirip tekrar deneyin</span>
+              </div>
+              <input
+                type="text"
+                maxLength={16}
+                value={playerUsername}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 16);
+                  setPlayerUsername(val);
+                  localStorage.setItem('mc_player_username', val);
+                }}
+                placeholder="Oyuncu Adı"
+                className="bg-black/90 border border-yellow-500/80 focus:border-yellow-400 px-3 py-1 text-white text-xl font-mono rounded outline-none w-full shadow-inner"
+              />
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
               <button

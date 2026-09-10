@@ -42,6 +42,26 @@ export function OptionsScreen({ onNavigate, settings, onUpdateSettings }: Option
 
       {/* Options Form */}
       <div className="relative z-10 w-full max-w-2xl h-[45vh] sm:h-[55vh] bg-black/60 border-4 border-[#373737] overflow-y-auto p-4 sm:p-6 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 shadow-inner text-white">
+        {/* Player Name / Nickname */}
+        <div className="flex flex-col gap-2 md:col-span-2 bg-black/40 p-3 rounded border border-yellow-500/50">
+          <label className="text-yellow-300 font-bold flex items-center justify-between">
+            <span>👤 Oyuncu Adı (Player Name / Nickname):</span>
+            <span className="text-xs text-gray-400 font-normal">Sunucularda bu isimle görünürsünüz</span>
+          </label>
+          <input
+            type="text"
+            maxLength={16}
+            value={local.playerName || localStorage.getItem('mc_player_username') || 'Steve'}
+            onChange={(e) => {
+              const clean = e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 16);
+              setLocal({ ...local, playerName: clean });
+              localStorage.setItem('mc_player_username', clean);
+            }}
+            placeholder="Steve"
+            className="bg-black border-2 border-yellow-500/70 focus:border-yellow-400 px-3 py-2 text-white outline-none font-mono text-xl rounded"
+          />
+        </div>
+
         {/* FOV */}
         <div className="flex flex-col gap-2">
           <label className="text-yellow-300">Görüş Açısı (FOV): {local.fov}</label>

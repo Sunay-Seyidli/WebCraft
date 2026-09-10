@@ -168,6 +168,17 @@ export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
       group.add(nameTag);
     }
 
+    // Interactive hitbox for clickable text displays/interactions/holograms
+    const height = Math.max(0.8, data.height || 1.8);
+    const width = Math.max(0.6, data.width || 0.6);
+    const hitboxGeo = new THREE.BoxGeometry(width, height, width);
+    const hitboxMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0 });
+    const hitboxMesh = new THREE.Mesh(hitboxGeo, hitboxMat);
+    hitboxMesh.position.set(0, height / 2, 0);
+    hitboxMesh.name = "hitbox";
+    hitboxMesh.userData = { entityId: data.id };
+    group.add(hitboxMesh);
+
     return {
       group,
       data,
@@ -284,6 +295,8 @@ export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
   const hitboxMesh = new THREE.Mesh(hitboxGeo, hitboxMat);
   hitboxMesh.position.set(0, height / 2, 0);
   hitboxMesh.name = "hitbox";
+  hitboxMesh.userData = { entityId: data.id };
+  group.userData = { entityId: data.id };
   group.add(hitboxMesh);
 
   // Name Tag

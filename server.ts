@@ -1266,12 +1266,12 @@ async function startServer() {
 
             // Send player movement packet to Minecraft server so server loads chunks and syncs entities!
             if (bot._client && bot._client.state === "play") {
-              const degYaw = ((msg.yaw * 180) / Math.PI) % 360;
-              const degPitch = ((msg.pitch * 180) / Math.PI) % 360;
+              const degYaw = (((Math.PI - msg.yaw) * 180) / Math.PI) % 360;
+              const degPitch = (((-msg.pitch) * 180) / Math.PI) % 360;
               const onGround = !!msg.onGround;
 
               try {
-                // Compatible with both 1.21.3+ (requires MovementFlags bitflags) and older versions (requires onGround boolean)
+                // Compatible with 1.21.3+ (requires MovementFlags bitflags) and older versions (requires onGround boolean)
                 bot._client.write("position_look", {
                   x: msg.x,
                   y: msg.y,
@@ -1343,59 +1343,158 @@ async function startServer() {
             }
           }
 
-          // 3. Dig Block
+          // 4. Dig / Break Block (Works in Survival, Creative, and 1.21.4)
           else if (msg.type === "dig") {
-            const targetPos = new Vec3(msg.x, msg.y, msg.z);
+            const bx = Math.floor(msg.x);
+            const by = Math.floor(msg.y);
+            const bz = Math.floor(msg.z);
+            const targetPos = new Vec3(bx, by, bz);
             const b = bot.blockAt(targetPos);
-            if (b) {
-              try {
-                bot.lookAt(targetPos.offset(0.5, 0.5, 0.5), true);
-              } catch {}
+
+            // Turn bot toward block to pass line-of-sight anti-cheat checks
+            try {
+              bot.lookAt(targetPos.offset(0.5, 0.5, 0.5), true);
+            } catch {}
+
+            // Send visual arm swing
+            try {
+              bot.swingArm("right");
+            } catch {}
+
+            // Direct packet sender for 1.21.4 and older versions
+            const sendDirectDigPackets = () => {
+              if (bot._client && bot._client.state === "play") {
+                try {
+                  // status 0: start destroy block (instant break in creative)
+                  bot._client.write("block_dig", {
+                    status: 0,
+                    location: { x: bx, y: by, z: bz },
+                    face: 1,
+                    direction: 1,
+                    sequence: 0,
+                  });
+                  // status 2: finish destroy block
+                  bot._client.write("block_dig", {
+                    status: 2,
+                    location: { x: bx, y: by, z: bz },
+                    face: 1,
+                    direction: 1,
+                    sequence: 0,
+                  });
+                } catch (e: any) {
+                  console.warn("[MC Bridge] direct dig packet error:", e.message);
+                }
+              }
+            };
+
+            if (b && b.name !== "air" && b.name !== "bedrock") {
+              if (bot.targetDigBlock) {
+                try { bot.stopDigging(); } catch {}
+              }
               bot.dig(b).catch(() => {
-                // Fallback direct dig packet
-                if (bot._client) {
+                sendDirectDigPackets();
+              });
+            } else {
+              sendDirectDigPackets();
+            }
+
+            // Optimistic block removal in client and local world
+            setTimeout(() => {
+              try {
+                if (typeof bot._updateBlockState === "function") {
+                  bot._updateBlockState(targetPos, 0);
+                }
+              } catch {}
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(
+                  JSON.stringify({
+                    type: "blockUpdate",
+                    x: bx,
+                    y: by,
+                    z: bz,
+                    blockType: "air",
+                  })
+                );
+              }
+            }, 80);
+          }
+
+          // 5. Place Block (Works for 1.21.4 with worldBorderHit, slot switching, and direction)
+          else if (msg.type === "place") {
+            const bx = Math.floor(msg.x);
+            const by = Math.floor(msg.y);
+            const bz = Math.floor(msg.z);
+            const refPos = new Vec3(bx, by, bz);
+            const ref = bot.blockAt(refPos);
+            const face = msg.face || { x: 0, y: 1, z: 0 };
+            const faceVec = new Vec3(face.x, face.y, face.z);
+
+            // Select active quickbar slot if provided
+            if (typeof msg.slot === "number" && msg.slot >= 0 && msg.slot <= 8) {
+              try {
+                bot.setQuickBarSlot(msg.slot);
+              } catch {}
+            }
+
+            try {
+              bot.lookAt(refPos.offset(0.5 + face.x * 0.5, 0.5 + face.y * 0.5, 0.5 + face.z * 0.5), true);
+            } catch {}
+
+            try {
+              bot.swingArm("right");
+            } catch {}
+
+            // Determine Minecraft face direction:
+            // 0: -Y (bottom), 1: +Y (top), 2: -Z (north), 3: +Z (south), 4: -X (west), 5: +X (east)
+            let direction = 1;
+            if (face.y < 0) direction = 0;
+            else if (face.y > 0) direction = 1;
+            else if (face.z < 0) direction = 2;
+            else if (face.z > 0) direction = 3;
+            else if (face.x < 0) direction = 4;
+            else if (face.x > 0) direction = 5;
+
+            const sendDirectPlacePacket = () => {
+              if (bot._client && bot._client.state === "play") {
+                try {
+                  // 1.21.4 format
+                  bot._client.write("block_place", {
+                    hand: 0,
+                    location: { x: bx, y: by, z: bz },
+                    direction: direction,
+                    cursorX: 0.5 + face.x * 0.5,
+                    cursorY: 0.5 + face.y * 0.5,
+                    cursorZ: 0.5 + face.z * 0.5,
+                    insideBlock: false,
+                    worldBorderHit: false,
+                    sequence: 0,
+                  });
+                } catch {
                   try {
-                    bot._client.write("block_dig", {
-                      status: 0,
-                      location: { x: msg.x, y: msg.y, z: msg.z },
-                      direction: 1,
-                      sequence: 0,
-                    });
-                    bot._client.write("block_dig", {
-                      status: 2,
-                      location: { x: msg.x, y: msg.y, z: msg.z },
-                      direction: 1,
-                      sequence: 0,
+                    // Older legacy format
+                    bot._client.write("block_place", {
+                      hand: 0,
+                      location: { x: bx, y: by, z: bz },
+                      direction: direction,
+                      cursorX: Math.floor((0.5 + face.x * 0.5) * 16),
+                      cursorY: Math.floor((0.5 + face.y * 0.5) * 16),
+                      cursorZ: Math.floor((0.5 + face.z * 0.5) * 16),
                     });
                   } catch {}
                 }
-              });
-            }
-            try {
-              bot.swingArm("right");
-            } catch {}
-          }
+              }
+            };
 
-          // 4. Place Block
-          else if (msg.type === "place") {
-            const refPos = new Vec3(msg.x, msg.y, msg.z);
-            const ref = bot.blockAt(refPos);
-            if (ref) {
-              const face = msg.face || { x: 0, y: 1, z: 0 };
-              const faceVec = new Vec3(face.x, face.y, face.z);
-              try {
-                bot.lookAt(refPos.offset(0.5, 0.5, 0.5), true);
-              } catch {}
+            if (ref && bot.heldItem) {
               bot.placeBlock(ref, faceVec).catch(() => {
-                bot.activateBlock(ref, faceVec).catch(() => {});
+                sendDirectPlacePacket();
               });
+            } else {
+              sendDirectPlacePacket();
             }
-            try {
-              bot.swingArm("right");
-            } catch {}
           }
 
-          // 5. Select Hotbar Slot
+          // 6. Select Hotbar Slot
           else if (msg.type === "selectSlot" && typeof msg.slot === "number") {
             if (msg.slot >= 0 && msg.slot <= 8) {
               try {
@@ -1404,29 +1503,62 @@ async function startServer() {
             }
           }
 
-          // 6. Attack / Interact with Entity
-          else if (msg.type === "attackEntity" && msg.entityId && bot) {
-            try {
-              const target = bot.entities[msg.entityId];
-              if (target) {
-                try {
-                  bot.lookAt(target.position.offset(0, target.height / 2 || 0.9, 0), true);
-                } catch {}
+          // 7. Attack Entity (Mob, Player, or NPC)
+          else if (msg.type === "attackEntity" && msg.entityId !== undefined && bot) {
+            const eId = Number(msg.entityId);
+            const target = bot.entities && (bot.entities[eId] || bot.entities[msg.entityId]);
+            if (target && target.position) {
+              try {
+                bot.lookAt(target.position.offset(0, (target.height || 1.8) / 2, 0), true);
+              } catch {}
+              try {
                 bot.attack(target);
-                bot.swingArm("right");
-              }
+              } catch {}
+            }
+
+            // Direct use_entity packet with mouse = 1 (attack) for 1.21.4 and servers with custom NPCs
+            if (bot._client && bot._client.state === "play") {
+              try {
+                bot._client.write("use_entity", {
+                  target: eId,
+                  mouse: 1, // 1 = attack
+                  sneaking: false,
+                });
+              } catch {}
+            }
+
+            try {
+              bot.swingArm("right");
             } catch {}
           }
-          else if (msg.type === "useEntity" && msg.entityId && bot) {
-            try {
-              const target = bot.entities[msg.entityId];
-              if (target) {
-                try {
-                  bot.lookAt(target.position.offset(0, target.height / 2 || 0.9, 0), true);
-                } catch {}
+
+          // 8. Interact / Use Entity (NPC dialogue, villager trade, mount, right-click)
+          else if (msg.type === "useEntity" && msg.entityId !== undefined && bot) {
+            const eId = Number(msg.entityId);
+            const target = bot.entities && (bot.entities[eId] || bot.entities[msg.entityId]);
+            if (target && target.position) {
+              try {
+                bot.lookAt(target.position.offset(0, (target.height || 1.8) / 2, 0), true);
+              } catch {}
+              try {
                 bot.activateEntity(target);
-                bot.swingArm("right");
-              }
+              } catch {}
+            }
+
+            // Direct use_entity packet with mouse = 0 (interact) and hand = 0 (main hand)
+            if (bot._client && bot._client.state === "play") {
+              try {
+                bot._client.write("use_entity", {
+                  target: eId,
+                  mouse: 0, // 0 = interact
+                  hand: 0,
+                  sneaking: false,
+                });
+              } catch {}
+            }
+
+            try {
+              bot.swingArm("right");
             } catch {}
           }
 
