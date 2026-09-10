@@ -690,96 +690,51 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
     window.addEventListener('mousemove', handleMouseMove);
 
-    // Ultra-Fast 3D DDA Voxel Raymarching (Amanatides & Woo algorithm: ~6-8 steps max, 0.0005ms)
+    // Ultra-Fast High-Precision Voxel Raymarching (0.04m precision step along camera look vector)
     const cameraForward = new THREE.Vector3();
     const faceNormalVec = new THREE.Vector3();
+    const samplePos = new THREE.Vector3();
+    const prevSamplePos = new THREE.Vector3();
 
     const getRaycastTarget = (): TargetedBlockData | null => {
-      const camPos = camera.position;
+      camera.updateMatrixWorld(true);
       camera.getWorldDirection(cameraForward);
-      const dirX = cameraForward.x;
-      const dirY = cameraForward.y;
-      const dirZ = cameraForward.z;
+      const camPos = camera.position;
 
-      let mapX = Math.floor(camPos.x);
-      let mapY = Math.floor(camPos.y);
-      let mapZ = Math.floor(camPos.z);
+      const stepSize = 0.04;
+      const maxReach = 5.5;
 
-      const deltaDistX = Math.abs(1 / (dirX || 0.000001));
-      const deltaDistY = Math.abs(1 / (dirY || 0.000001));
-      const deltaDistZ = Math.abs(1 / (dirZ || 0.000001));
+      for (let dist = 0.08; dist <= maxReach; dist += stepSize) {
+        samplePos.copy(camPos).addScaledVector(cameraForward, dist);
+        const bx = Math.floor(samplePos.x);
+        const by = Math.floor(samplePos.y);
+        const bz = Math.floor(samplePos.z);
 
-      let stepX: number, stepY: number, stepZ: number;
-      let sideDistX: number, sideDistY: number, sideDistZ: number;
-
-      if (dirX < 0) {
-        stepX = -1;
-        sideDistX = (camPos.x - mapX) * deltaDistX;
-      } else {
-        stepX = 1;
-        sideDistX = (mapX + 1.0 - camPos.x) * deltaDistX;
-      }
-      if (dirY < 0) {
-        stepY = -1;
-        sideDistY = (camPos.y - mapY) * deltaDistY;
-      } else {
-        stepY = 1;
-        sideDistY = (mapY + 1.0 - camPos.y) * deltaDistY;
-      }
-      if (dirZ < 0) {
-        stepZ = -1;
-        sideDistZ = (camPos.z - mapZ) * deltaDistZ;
-      } else {
-        stepZ = 1;
-        sideDistZ = (mapZ + 1.0 - camPos.z) * deltaDistZ;
-      }
-
-      const maxDist = 5.2;
-      let distTraveled = 0;
-      let lastSide = 0; // 0: X, 1: Y, 2: Z
-
-      while (distTraveled < maxDist) {
-        if (sideDistX < sideDistY) {
-          if (sideDistX < sideDistZ) {
-            distTraveled = sideDistX;
-            sideDistX += deltaDistX;
-            mapX += stepX;
-            lastSide = 0;
-          } else {
-            distTraveled = sideDistZ;
-            sideDistZ += deltaDistZ;
-            mapZ += stepZ;
-            lastSide = 2;
-          }
-        } else {
-          if (sideDistY < sideDistZ) {
-            distTraveled = sideDistY;
-            sideDistY += deltaDistY;
-            mapY += stepY;
-            lastSide = 1;
-          } else {
-            distTraveled = sideDistZ;
-            sideDistZ += deltaDistZ;
-            mapZ += stepZ;
-            lastSide = 2;
-          }
-        }
-
-        if (distTraveled > maxDist) break;
-
-        const block = blocksMap.get(`${mapX},${mapY},${mapZ}`);
+        const block = blocksMap.get(`${bx},${by},${bz}`);
         if (block) {
-          if (lastSide === 0) faceNormalVec.set(-stepX, 0, 0);
-          else if (lastSide === 1) faceNormalVec.set(0, -stepY, 0);
-          else faceNormalVec.set(0, 0, -stepZ);
+          prevSamplePos.copy(camPos).addScaledVector(cameraForward, Math.max(0, dist - stepSize));
+          const pbx = Math.floor(prevSamplePos.x);
+          const pby = Math.floor(prevSamplePos.y);
+          const pbz = Math.floor(prevSamplePos.z);
+
+          let nx = pbx - bx;
+          let ny = pby - by;
+          let nz = pbz - bz;
+
+          if (nx !== 0) { ny = 0; nz = 0; }
+          else if (ny !== 0) { nx = 0; nz = 0; }
+          else if (nz !== 0) { nx = 0; ny = 0; }
+          else { ny = 1; }
+
+          faceNormalVec.set(nx, ny, nz);
 
           return {
             type: block.type,
             name: BLOCK_NAMES[block.type] || block.type,
-            x: mapX,
-            y: mapY,
-            z: mapZ,
-            distance: parseFloat(distTraveled.toFixed(1)),
+            x: bx,
+            y: by,
+            z: bz,
+            distance: parseFloat(dist.toFixed(1)),
             faceNormal: faceNormalVec,
             isBedrock: block.type === 'bedrock'
           };
@@ -943,13 +898,23 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       const target = getRaycastTarget();
       if (!target) return;
 
-      const activeSlot = selectedHotbarIndexRef.current;
-      const currentItem = hotbarRef.current[activeSlot];
+      let activeSlot = selectedHotbarIndexRef.current;
+      let currentItem = hotbarRef.current[activeSlot];
 
+      // Auto-select valid block if active slot is air
       if (!currentItem || currentItem.count <= 0 || currentItem.type === 'air') {
-        soundManager.playClick();
-        return;
+        const validIndex = hotbarRef.current.findIndex(i => i && i.count > 0 && i.type !== 'air');
+        if (validIndex !== -1) {
+          activeSlot = validIndex;
+          currentItem = hotbarRef.current[validIndex];
+          handleSelectHotbarSlot(validIndex);
+        } else if (!server) {
+          // Singleplayer creative fallback
+          currentItem = { type: 'cobblestone', count: 64, name: 'Kırıktaş' };
+        }
       }
+
+      const placeBlockType = (currentItem && currentItem.type !== 'air') ? currentItem.type : 'cobblestone';
 
       const placeX = target.x + Math.round(target.faceNormal.x);
       const placeY = target.y + Math.round(target.faceNormal.y);
@@ -971,8 +936,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
       if (!server) {
         // Singleplayer: execute immediately
-        addBlockAt(placeX, placeY, placeZ, currentItem.type);
-        soundManager.playDig(currentItem.type);
+        addBlockAt(placeX, placeY, placeZ, placeBlockType);
+        soundManager.playDig(placeBlockType);
         setHotbar((prev) => {
           const updated = [...prev];
           if (updated[activeSlot] && updated[activeSlot].count > 0) {
@@ -982,8 +947,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         });
       } else {
         // Multiplayer: Optimistic local placement + send place packet
-        addBlockAt(placeX, placeY, placeZ, currentItem.type);
-        soundManager.playDig(currentItem.type);
+        addBlockAt(placeX, placeY, placeZ, placeBlockType);
+        soundManager.playDig(placeBlockType);
         setHotbar((prev) => {
           const updated = [...prev];
           if (updated[activeSlot] && updated[activeSlot].count > 0) {
@@ -1016,8 +981,11 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     const handleMouseDown = (e: MouseEvent) => {
       if (pausedRef.current || inventoryOpenRef.current || chatOpenRef.current) return;
 
+      const targetElem = e.target as HTMLElement;
+      if (targetElem && (targetElem.tagName === 'BUTTON' || targetElem.tagName === 'INPUT' || targetElem.closest('button'))) return;
+
       if (document.pointerLockElement !== renderer.domElement) {
-        renderer.domElement.requestPointerLock();
+        try { renderer.domElement.requestPointerLock(); } catch {}
       }
 
       if (e.button === 0) {
@@ -1043,7 +1011,12 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       if (e.button === 2) isMouseDownRightRef.current = false;
     };
 
-    const handleContextMenu = (e: MouseEvent) => e.preventDefault();
+    const handleContextMenu = (e: MouseEvent) => {
+      const targetElem = e.target as HTMLElement;
+      if (!targetElem || (!targetElem.tagName.includes('BUTTON') && !targetElem.closest('button'))) {
+        e.preventDefault();
+      }
+    };
 
     const handleWheel = (e: WheelEvent) => {
       if (pausedRef.current || inventoryOpenRef.current || chatOpenRef.current) return;
@@ -1054,9 +1027,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       }
     };
 
-    renderer.domElement.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mouseup', handleMouseUp);
-    renderer.domElement.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('contextmenu', handleContextMenu);
     window.addEventListener('wheel', handleWheel, { passive: true });
 
     // Touch Look Handling on Canvas (Mobile Screen Pan)
@@ -1668,8 +1641,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('wheel', handleWheel);
-      renderer.domElement.removeEventListener('mousedown', handleMouseDown);
-      renderer.domElement.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('contextmenu', handleContextMenu);
       renderer.domElement.removeEventListener('touchstart', handleTouchStart);
       renderer.domElement.removeEventListener('touchmove', handleTouchMove);
       renderer.domElement.removeEventListener('touchend', handleTouchEnd);
