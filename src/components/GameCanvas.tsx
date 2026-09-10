@@ -139,6 +139,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   const [playerPos, setPlayerPos] = useState({ x: '0.0', y: '64.0', z: '0.0' });
   const [targetedBlock, setTargetedBlock] = useState<TargetedBlockData | null>(null);
   const [disconnectedReason, setDisconnectedReason] = useState<string | null>(null);
+  const [reconnectTrigger, setReconnectTrigger] = useState(0);
 
   const lastActionTimeRef = useRef<number>(0);
 
@@ -1339,7 +1340,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       if (wsRef.current) wsRef.current.close();
       entitiesMapRef.current.clear();
     };
-  }, [activeSettings.fov, activeSettings.graphics, activeSettings.texturePack, server, addChatMessage]);
+  }, [activeSettings.fov, activeSettings.graphics, activeSettings.texturePack, server, addChatMessage, reconnectTrigger]);
 
   const handleUpdateSetting = <K extends keyof GameSettings>(key: K, value: GameSettings[K]) => {
     setActiveSettings(prev => {
@@ -1990,6 +1991,19 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                 <button
                   onClick={() => {
                     soundManager.playClick();
+                    setServerLoading(true);
+                    setServerStatusText('Yeniden bağlanılıyor...');
+                    setDisconnectedReason(null);
+                    setPaused(false);
+                    setReconnectTrigger(prev => prev + 1);
+                  }}
+                  className="py-2.5 sm:py-3 bg-[#0d9488] hover:bg-[#14b8a6] text-white border-2 border-t-[#2dd4bf] border-l-[#2dd4bf] border-b-[#115e59] border-r-[#115e59] text-xl sm:text-2xl font-bold"
+                >
+                  🔌 Yeniden Bağlan (Reconnect)
+                </button>
+                <button
+                  onClick={() => {
+                    soundManager.playClick();
                     onExit();
                   }}
                   className="py-2.5 sm:py-3 bg-[#a82020] hover:bg-[#c93030] text-white border-2 border-t-[#f87171] border-l-[#f87171] border-b-[#7f1d1d] border-r-[#7f1d1d] text-xl sm:text-2xl font-bold mt-1"
@@ -2176,15 +2190,29 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
             <div className="bg-black/70 border border-gray-700 p-4 text-xl sm:text-2xl text-yellow-200 whitespace-pre-wrap font-mono">
               {disconnectedReason}
             </div>
-            <button
-              onClick={() => {
-                soundManager.playClick();
-                onExit();
-              }}
-              className="w-full py-3 bg-[#4a7c34] hover:bg-[#5b9640] active:bg-[#3d6929] text-white border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-2xl font-bold shadow-xl"
-            >
-              Ana Menüye Dön
-            </button>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={() => {
+                  soundManager.playClick();
+                  setServerLoading(true);
+                  setServerStatusText('Yeniden bağlanılıyor...');
+                  setDisconnectedReason(null);
+                  setReconnectTrigger(prev => prev + 1);
+                }}
+                className="flex-1 py-3 bg-[#0d9488] hover:bg-[#14b8a6] active:bg-[#0f766e] text-white border-2 border-t-[#2dd4bf] border-l-[#2dd4bf] border-b-[#115e59] border-r-[#115e59] text-2xl font-bold shadow-xl rounded"
+              >
+                🔌 Yeniden Bağlan (Reconnect)
+              </button>
+              <button
+                onClick={() => {
+                  soundManager.playClick();
+                  onExit();
+                }}
+                className="flex-1 py-3 bg-[#4a7c34] hover:bg-[#5b9640] active:bg-[#3d6929] text-white border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-2xl font-bold shadow-xl rounded"
+              >
+                Ana Menüye Dön
+              </button>
+            </div>
           </div>
         </div>
       )}
