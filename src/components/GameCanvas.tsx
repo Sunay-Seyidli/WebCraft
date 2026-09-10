@@ -907,8 +907,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               setServerStatusText(data.message || 'Sunucuya bağlanılıyor...');
               addChatMessage('Sistem', data.message, true);
             } else if (data.type === 'login') {
-              setServerStatusText(`${data.username} olarak giriş yapıldı. Dünya yükleniyor...`);
-              addChatMessage('Sistem', data.message || `${data.username} sunucuya giriş yaptı.`, true);
+              const uName = data?.username || 'Oyuncu';
+              setServerStatusText(`${uName} olarak giriş yapıldı. Dünya yükleniyor...`);
+              addChatMessage('Sistem', data?.message || `${uName} sunucuya giriş yaptı.`, true);
             } else if (data.type === 'spawn') {
               setServerLoading(false);
               setServerStatusText('Dünyaya katıldınız!');
@@ -1043,7 +1044,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
               setPing(rtt + data.serverPing);
             } else if (data.type === 'tabList') {
               if (Array.isArray(data.players)) {
-                setTabList(data.players.filter((p: any) => p && typeof p.username === 'string'));
+                setTabList(data.players.filter((p: any) => p && typeof p.username === 'string' && p.username.trim() !== ''));
               }
             } else if (data.type === 'scoreboard') {
               setScoreboard({
@@ -1412,7 +1413,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         candidates = commands.filter(c => c.toLowerCase().startsWith(lastWord.toLowerCase()));
       } else {
         // Player names autocomplete from tabList
-        const playerNames = tabList.filter(p => p && p.username).map(p => p.username || '');
+        const playerNames = (Array.isArray(tabList) ? tabList : [])
+          .filter(p => p && typeof p.username === 'string')
+          .map(p => p.username);
         candidates = playerNames.filter(name => name.toLowerCase().startsWith(lastWord.toLowerCase()));
       }
 

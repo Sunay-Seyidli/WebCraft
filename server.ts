@@ -1330,7 +1330,7 @@ async function startServer() {
 
           // 2. Ping / Pong latency check
           else if (msg.type === "ping") {
-            const botPing = (bot.player && bot.player.ping) || (bot.players && bot.players[bot.username]?.ping) || 0;
+            const botPing = (bot && bot.player && bot.player.ping) || (bot && bot.players && bot.username && bot.players[bot.username]?.ping) || 0;
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(
                 JSON.stringify({

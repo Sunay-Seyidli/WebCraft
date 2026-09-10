@@ -278,8 +278,8 @@ export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
   }
 
   // Name Tag
-  const displayName = data.username || data.customName || data.name || (data.type === 'player' ? 'Oyuncu' : data.type);
-  const isPlayer = !!data.username || data.type === 'player';
+  const displayName = (data && data.username) || (data && data.customName) || (data && data.name) || (data && data.type === 'player' ? 'Oyuncu' : (data && data.type) || 'Entity');
+  const isPlayer = !!(data && data.username) || (data && data.type === 'player');
   const nameTag = createNameTagSprite(displayName, isPlayer);
   nameTag.position.set(0, (data.height || 1.8) + 0.35, 0);
   group.add(nameTag);
