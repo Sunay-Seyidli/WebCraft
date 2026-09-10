@@ -277,6 +277,15 @@ export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
     group.add(rightLeg);
   }
 
+  // Invisible high-precision interaction hitbox/collider for smooth hit detection
+  const height = data.height || 1.8;
+  const hitboxGeo = new THREE.BoxGeometry(0.9, height, 0.9);
+  const hitboxMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0 });
+  const hitboxMesh = new THREE.Mesh(hitboxGeo, hitboxMat);
+  hitboxMesh.position.set(0, height / 2, 0);
+  hitboxMesh.name = "hitbox";
+  group.add(hitboxMesh);
+
   // Name Tag
   const displayName = (data && data.username) || (data && data.customName) || (data && data.name) || (data && data.type === 'player' ? 'Oyuncu' : (data && data.type) || 'Entity');
   const isPlayer = !!(data && data.username) || (data && data.type === 'player');

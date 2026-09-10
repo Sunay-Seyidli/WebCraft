@@ -883,7 +883,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     // Connect WebSocket Minecraft Java Protocol Bridge if server is specified
     if (server) {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const chosenPlayerName = (activeSettings.playerName?.trim() || localStorage.getItem('mc_player_username') || 'Steve').replace(/[^a-zA-Z0-9_]/g, '');
+      const chosenPlayerName = (settings.playerName?.trim() || activeSettings.playerName?.trim() || localStorage.getItem('mc_player_username') || 'Steve').replace(/[^a-zA-Z0-9_]/g, '');
       const wsUrl = `${wsProtocol}//${window.location.host}/ws-proxy?host=${encodeURIComponent(server.ip)}&port=${server.port}&username=${encodeURIComponent(chosenPlayerName || 'Steve')}&mode=protocol`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
@@ -1170,16 +1170,24 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         let nextX = player.x + dx;
         let nextZ = player.z + dz;
 
-        // Voxel Ground Detection & Gravity
+        // Voxel Ground Detection & Gravity (Bounding Box overlap for perfect alignment without slipping off blocks)
         let groundY = -999;
-        const curBlockX = Math.round(player.x);
-        const curBlockZ = Math.round(player.z);
-
+        const offsets = [-0.3, 0, 0.3];
         for (let by = Math.ceil(player.y + 0.5); by >= Math.floor(player.y) - 6; by--) {
-          if (blocksMap.has(`${curBlockX},${by},${curBlockZ}`)) {
-            groundY = by + 0.5;
-            break;
+          let foundSolid = false;
+          for (const ox of offsets) {
+            for (const oz of offsets) {
+              const testX = Math.round(player.x + ox);
+              const testZ = Math.round(player.z + oz);
+              if (blocksMap.has(`${testX},${by},${testZ}`)) {
+                groundY = by + 0.5;
+                foundSolid = true;
+                break;
+              }
+            }
+            if (foundSolid) break;
           }
+          if (foundSolid) break;
         }
 
         let isOnGround = false;

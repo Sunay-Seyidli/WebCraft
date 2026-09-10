@@ -683,6 +683,7 @@ async function startServer() {
         }
 
         bot = mineflayer.createBot(botOptions);
+        bot.physicsEnabled = false;
 
         // Setup Velocity Transfer listeners and socket resilience when possible
         const setupTransferListener = () => {
@@ -1344,8 +1345,12 @@ async function startServer() {
 
           // 3. Dig Block
           else if (msg.type === "dig") {
-            const b = bot.blockAt(new Vec3(msg.x, msg.y, msg.z));
+            const targetPos = new Vec3(msg.x, msg.y, msg.z);
+            const b = bot.blockAt(targetPos);
             if (b) {
+              try {
+                bot.lookAt(targetPos.offset(0.5, 0.5, 0.5), true);
+              } catch {}
               bot.dig(b).catch(() => {
                 // Fallback direct dig packet
                 if (bot._client) {
@@ -1373,10 +1378,14 @@ async function startServer() {
 
           // 4. Place Block
           else if (msg.type === "place") {
-            const ref = bot.blockAt(new Vec3(msg.x, msg.y, msg.z));
+            const refPos = new Vec3(msg.x, msg.y, msg.z);
+            const ref = bot.blockAt(refPos);
             if (ref) {
               const face = msg.face || { x: 0, y: 1, z: 0 };
               const faceVec = new Vec3(face.x, face.y, face.z);
+              try {
+                bot.lookAt(refPos.offset(0.5, 0.5, 0.5), true);
+              } catch {}
               bot.placeBlock(ref, faceVec).catch(() => {
                 bot.activateBlock(ref, faceVec).catch(() => {});
               });
@@ -1400,6 +1409,9 @@ async function startServer() {
             try {
               const target = bot.entities[msg.entityId];
               if (target) {
+                try {
+                  bot.lookAt(target.position.offset(0, target.height / 2 || 0.9, 0), true);
+                } catch {}
                 bot.attack(target);
                 bot.swingArm("right");
               }
@@ -1409,6 +1421,9 @@ async function startServer() {
             try {
               const target = bot.entities[msg.entityId];
               if (target) {
+                try {
+                  bot.lookAt(target.position.offset(0, target.height / 2 || 0.9, 0), true);
+                } catch {}
                 bot.activateEntity(target);
                 bot.swingArm("right");
               }
