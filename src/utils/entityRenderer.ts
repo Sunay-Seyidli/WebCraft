@@ -19,8 +19,36 @@ export interface RenderedEntity {
   nameTag?: THREE.Sprite;
 }
 
-// Generate a crisp canvas texture for 3D billboard name tag
+// Global Caches for 60+ FPS Performance
+const spriteCache = new Map<string, THREE.Sprite>();
+const materialCache = new Map<number, THREE.MeshLambertMaterial>();
+
+function getCachedMaterial(color: number): THREE.MeshLambertMaterial {
+  let mat = materialCache.get(color);
+  if (!mat) {
+    mat = new THREE.MeshLambertMaterial({ color });
+    materialCache.set(color, mat);
+  }
+  return mat;
+}
+
+// Shared Geometries to eliminate WebGL allocation overhead
+const geoHead = new THREE.BoxGeometry(0.45, 0.45, 0.45);
+const geoTorso = new THREE.BoxGeometry(0.45, 0.65, 0.26);
+const geoArm = new THREE.BoxGeometry(0.18, 0.65, 0.18);
+const geoLeg = new THREE.BoxGeometry(0.2, 0.65, 0.2);
+const geoQuadBody = new THREE.BoxGeometry(0.7, 0.6, 1.0);
+const geoQuadLeg = new THREE.BoxGeometry(0.2, 0.45, 0.2);
+const geoItem = new THREE.BoxGeometry(0.35, 0.35, 0.35);
+
+// Cached Name Tag Sprite Generator
 function createNameTagSprite(text: string, isPlayer: boolean = false): THREE.Sprite {
+  const cacheKey = `${isPlayer ? 'P:' : 'M:'}${text}`;
+  const existing = spriteCache.get(cacheKey);
+  if (existing) {
+    return existing.clone();
+  }
+
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 64;
@@ -28,11 +56,10 @@ function createNameTagSprite(text: string, isPlayer: boolean = false): THREE.Spr
   if (ctx) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    // Rounded pill
     ctx.beginPath();
     ctx.roundRect(8, 8, canvas.width - 16, canvas.height - 16, 12);
     ctx.fill();
-    ctx.strokeStyle = isPlayer ? 'rgba(250, 204, 21, 0.8)' : 'rgba(255, 255, 255, 0.4)';
+    ctx.strokeStyle = isPlayer ? '#fde047' : 'rgba(255, 255, 255, 0.4)';
     ctx.lineWidth = 3;
     ctx.stroke();
 
@@ -49,11 +76,19 @@ function createNameTagSprite(text: string, isPlayer: boolean = false): THREE.Spr
   const sprite = new THREE.Sprite(spriteMat);
   sprite.scale.set(2.0, 0.5, 1.0);
   sprite.renderOrder = 999;
+
+  spriteCache.set(cacheKey, sprite);
   return sprite;
 }
 
-// Generate a floating hologram / display entity billboard with support for multiple lines & colors
+// Hologram / Floating Display Sprite Generator
 function createHologramSprite(text: string): THREE.Sprite {
+  const cacheKey = `H:${text}`;
+  const existing = spriteCache.get(cacheKey);
+  if (existing) {
+    return existing.clone();
+  }
+
   const rawLines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
   const lines = rawLines.length > 0 ? rawLines : [text];
 
@@ -64,7 +99,6 @@ function createHologramSprite(text: string): THREE.Sprite {
   const ctx = canvas.getContext('2d');
   if (ctx) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // Dark semi-transparent background box like Minecraft HolographicDisplays
     ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
     ctx.beginPath();
     ctx.roundRect(8, 4, canvas.width - 16, canvas.height - 8, 8);
@@ -76,7 +110,6 @@ function createHologramSprite(text: string): THREE.Sprite {
 
     const startY = (canvas.height - (lines.length - 1) * lineH) / 2;
     lines.forEach((line, idx) => {
-      // Accent color on first line, crisp white on subsequent lines
       ctx.fillStyle = idx === 0 ? '#fde047' : '#ffffff';
       ctx.fillText(line, canvas.width / 2, startY + idx * lineH);
     });
@@ -90,6 +123,8 @@ function createHologramSprite(text: string): THREE.Sprite {
   const height = Math.max(0.4, 0.35 * lines.length + 0.15);
   sprite.scale.set(height * aspect, height, 1.0);
   sprite.renderOrder = 999;
+
+  spriteCache.set(cacheKey, sprite);
   return sprite;
 }
 
@@ -107,6 +142,7 @@ const ENTITY_COLORS: Record<string, { head: number; body: number; legs: number; 
   spider: { head: 0x222222, body: 0x181818, legs: 0x111111, arms: 0x111111 },
   iron_golem: { head: 0xcccccc, body: 0xdddddd, legs: 0xaaaaaa, arms: 0xbbbbbb },
   enderman: { head: 0x111111, body: 0x161616, legs: 0x0a0a0a, arms: 0x0a0a0a },
+  armor_stand: { head: 0x8b5a2b, body: 0x8b5a2b, legs: 0x8b5a2b, arms: 0x8b5a2b },
 };
 
 export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
@@ -146,13 +182,7 @@ export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
     };
   }
 
-  // Add custom entity palettes for armor_stands, interactions and other types
-  const customPalettes: Record<string, { head: number; body: number; legs: number; arms: number }> = {
-    armor_stand: { head: 0x8b5a2b, body: 0x8b5a2b, legs: 0x8b5a2b, arms: 0x8b5a2b },
-    interaction: { head: 0x3b82f6, body: 0x3b82f6, legs: 0x3b82f6, arms: 0x3b82f6 },
-  };
-
-  const colors = customPalettes[eName] || ENTITY_COLORS[eName] || ENTITY_COLORS.player;
+  const colors = ENTITY_COLORS[eName] || ENTITY_COLORS.player;
 
   let leftLeg: THREE.Mesh | undefined;
   let rightLeg: THREE.Mesh | undefined;
@@ -166,111 +196,83 @@ export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
 
   if (isItem) {
     // Floating rotating dropped item
-    const itemGeo = new THREE.BoxGeometry(0.35, 0.35, 0.35);
-    const itemMat = new THREE.MeshLambertMaterial({ color: 0x3b82f6 });
-    head = new THREE.Mesh(itemGeo, itemMat);
+    head = new THREE.Mesh(geoItem, getCachedMaterial(0x3b82f6));
     head.position.set(0, 0.25, 0);
     group.add(head);
   } else if (isQuadruped) {
     // Quadruped Model (Cow, Sheep, Pig)
-    const bodyGeo = new THREE.BoxGeometry(0.7, 0.6, 1.0);
-    const bodyMat = new THREE.MeshLambertMaterial({ color: colors.body });
-    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    const body = new THREE.Mesh(geoQuadBody, getCachedMaterial(colors.body));
     body.position.set(0, 0.65, 0);
     group.add(body);
 
-    const headGeo = new THREE.BoxGeometry(0.45, 0.45, 0.45);
-    const headMat = new THREE.MeshLambertMaterial({ color: colors.head });
-    head = new THREE.Mesh(headGeo, headMat);
+    head = new THREE.Mesh(geoHead, getCachedMaterial(colors.head));
     head.position.set(0, 0.95, 0.55);
     group.add(head);
 
-    // 4 legs
-    const legGeo = new THREE.BoxGeometry(0.2, 0.45, 0.2);
-    const legMat = new THREE.MeshLambertMaterial({ color: colors.legs });
-
-    leftLeg = new THREE.Mesh(legGeo, legMat);
+    const legMat = getCachedMaterial(colors.legs);
+    leftLeg = new THREE.Mesh(geoQuadLeg, legMat);
     leftLeg.position.set(-0.22, 0.22, 0.3);
     group.add(leftLeg);
 
-    rightLeg = new THREE.Mesh(legGeo, legMat);
+    rightLeg = new THREE.Mesh(geoQuadLeg, legMat);
     rightLeg.position.set(0.22, 0.22, 0.3);
     group.add(rightLeg);
 
-    const legBackL = new THREE.Mesh(legGeo, legMat);
+    const legBackL = new THREE.Mesh(geoQuadLeg, legMat);
     legBackL.position.set(-0.22, 0.22, -0.3);
     group.add(legBackL);
 
-    const legBackR = new THREE.Mesh(legGeo, legMat);
+    const legBackR = new THREE.Mesh(geoQuadLeg, legMat);
     legBackR.position.set(0.22, 0.22, -0.3);
     group.add(legBackR);
   } else if (isCreeper) {
     // Creeper Model
-    const bodyGeo = new THREE.BoxGeometry(0.4, 0.7, 0.25);
-    const bodyMat = new THREE.MeshLambertMaterial({ color: colors.body });
-    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    const body = new THREE.Mesh(geoTorso, getCachedMaterial(colors.body));
     body.position.set(0, 0.65, 0);
     group.add(body);
 
-    const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-    const headMat = new THREE.MeshLambertMaterial({ color: colors.head });
-    head = new THREE.Mesh(headGeo, headMat);
+    head = new THREE.Mesh(geoHead, getCachedMaterial(colors.head));
     head.position.set(0, 1.25, 0);
     group.add(head);
 
-    const legGeo = new THREE.BoxGeometry(0.22, 0.35, 0.22);
-    const legMat = new THREE.MeshLambertMaterial({ color: colors.legs });
-
-    leftLeg = new THREE.Mesh(legGeo, legMat);
+    const legMat = getCachedMaterial(colors.legs);
+    leftLeg = new THREE.Mesh(geoQuadLeg, legMat);
     leftLeg.position.set(-0.15, 0.17, 0.15);
     group.add(leftLeg);
 
-    rightLeg = new THREE.Mesh(legGeo, legMat);
+    rightLeg = new THREE.Mesh(geoQuadLeg, legMat);
     rightLeg.position.set(0.15, 0.17, 0.15);
     group.add(rightLeg);
   } else {
     // Standard Humanoid Model (Player, Zombie, Skeleton, Villager, NPC)
-    // Head (0.5 x 0.5 x 0.5)
-    const headGeo = new THREE.BoxGeometry(0.45, 0.45, 0.45);
-    const headMat = new THREE.MeshLambertMaterial({ color: colors.head });
-    head = new THREE.Mesh(headGeo, headMat);
+    head = new THREE.Mesh(geoHead, getCachedMaterial(colors.head));
     head.position.set(0, 1.45, 0);
     group.add(head);
 
-    // Torso (0.5 x 0.65 x 0.28)
-    const torsoGeo = new THREE.BoxGeometry(0.45, 0.65, 0.26);
-    const torsoMat = new THREE.MeshLambertMaterial({ color: colors.body });
-    const torso = new THREE.Mesh(torsoGeo, torsoMat);
+    const torso = new THREE.Mesh(geoTorso, getCachedMaterial(colors.body));
     torso.position.set(0, 0.9, 0);
     group.add(torso);
 
-    // Left & Right Arms (0.2 x 0.65 x 0.2)
-    const armGeo = new THREE.BoxGeometry(0.18, 0.65, 0.18);
-    const armMat = new THREE.MeshLambertMaterial({ color: colors.arms });
-
-    leftArm = new THREE.Mesh(armGeo, armMat);
+    const armMat = getCachedMaterial(colors.arms);
+    leftArm = new THREE.Mesh(geoArm, armMat);
     leftArm.position.set(-0.33, 0.9, 0);
     group.add(leftArm);
 
-    rightArm = new THREE.Mesh(armGeo, armMat);
+    rightArm = new THREE.Mesh(geoArm, armMat);
     rightArm.position.set(0.33, 0.9, 0);
     group.add(rightArm);
 
-    // Zombie arms outstretched forward
     if (eName === 'zombie') {
       leftArm.rotation.x = -Math.PI / 2;
       rightArm.rotation.x = -Math.PI / 2;
     }
 
-    // Left & Right Legs (0.2 x 0.65 x 0.2)
-    const legGeo = new THREE.BoxGeometry(0.2, 0.65, 0.2);
-    const legMat = new THREE.MeshLambertMaterial({ color: colors.legs });
-
-    leftLeg = new THREE.Mesh(legGeo, legMat);
+    const legMat = getCachedMaterial(colors.legs);
+    leftLeg = new THREE.Mesh(geoLeg, legMat);
     leftLeg.position.set(-0.12, 0.32, 0);
     group.add(leftLeg);
 
-    rightLeg = new THREE.Mesh(legGeo, legMat);
+    rightLeg = new THREE.Mesh(geoLeg, legMat);
     rightLeg.position.set(0.12, 0.32, 0);
     group.add(rightLeg);
   }
@@ -302,7 +304,7 @@ export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
 }
 
 export function updateEntityTick(entity: RenderedEntity, delta: number = 0.016) {
-  // Smoothly lerp towards target position
+  // Smoothly lerp position
   const dist = entity.group.position.distanceTo(entity.targetPos);
   if (dist > 0.01) {
     entity.isMoving = true;

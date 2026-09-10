@@ -226,9 +226,14 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     });
   }, []);
 
+  const updateHeldItemMeshRef = useRef<(() => void) | null>(null);
+
   // Hotbar slot selection synchronization
   const handleSelectHotbarSlot = (index: number) => {
     setSelectedHotbarIndex(index);
+    if (updateHeldItemMeshRef.current) {
+      setTimeout(() => updateHeldItemMeshRef.current?.(), 10);
+    }
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'selectSlot', slot: index }));
     }
@@ -250,6 +255,83 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     const camera = new THREE.PerspectiveCamera(activeSettings.fov, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 15, 0);
     cameraRef.current = camera;
+    scene.add(camera);
+
+    // FIRST-PERSON HAND & HELD ITEM MODEL
+    const handGroup = new THREE.Group();
+    handGroup.position.set(0.38, -0.32, -0.55);
+    handGroup.rotation.set(0.1, -0.2, 0);
+    camera.add(handGroup);
+
+    // Steve Arm Mesh (Forearm & Sleeve)
+    const armGeo = new THREE.BoxGeometry(0.14, 0.48, 0.14);
+    const armMat = new THREE.MeshLambertMaterial({ color: 0x00aaaa }); // Teal sleeve
+    const armMesh = new THREE.Mesh(armGeo, armMat);
+    armMesh.position.set(0, -0.15, 0);
+    handGroup.add(armMesh);
+
+    const handTipGeo = new THREE.BoxGeometry(0.13, 0.15, 0.13);
+    const handTipMat = new THREE.MeshLambertMaterial({ color: 0xf5d0a9 }); // Skin tone
+    const handTipMesh = new THREE.Mesh(handTipGeo, handTipMat);
+    handTipMesh.position.set(0, 0.15, 0);
+    handGroup.add(handTipMesh);
+
+    // Container for currently held item/block
+    const heldItemContainer = new THREE.Group();
+    heldItemContainer.position.set(0, 0.22, -0.08);
+    handGroup.add(heldItemContainer);
+
+    let currentHeldMesh: THREE.Object3D | null = null;
+    let handSwingProgress = 0.0;
+
+    const triggerHandSwing = () => {
+      handSwingProgress = 1.0;
+    };
+
+    const updateHeldItemMesh = () => {
+      if (currentHeldMesh) {
+        heldItemContainer.remove(currentHeldMesh);
+        currentHeldMesh = null;
+      }
+
+      const activeSlot = selectedHotbarIndexRef.current;
+      const item = hotbarRef.current[activeSlot];
+      if (!item || item.count <= 0 || item.type === 'air') return;
+
+      const blockTex = blockTextures[item.type];
+      if (blockTex) {
+        const miniGeo = new THREE.BoxGeometry(0.22, 0.22, 0.22);
+        let miniMat: THREE.Material | THREE.Material[];
+        if ('top' in blockTex) {
+          miniMat = [
+            new THREE.MeshLambertMaterial({ map: blockTex.side }),
+            new THREE.MeshLambertMaterial({ map: blockTex.side }),
+            new THREE.MeshLambertMaterial({ map: blockTex.top }),
+            new THREE.MeshLambertMaterial({ map: blockTex.bottom }),
+            new THREE.MeshLambertMaterial({ map: blockTex.side }),
+            new THREE.MeshLambertMaterial({ map: blockTex.side }),
+          ];
+        } else {
+          miniMat = new THREE.MeshLambertMaterial({ map: blockTex });
+        }
+        const miniBlock = new THREE.Mesh(miniGeo, miniMat);
+        miniBlock.rotation.set(0.2, 0.4, 0.1);
+        heldItemContainer.add(miniBlock);
+        currentHeldMesh = miniBlock;
+      } else {
+        const bladeGeo = new THREE.BoxGeometry(0.06, 0.45, 0.02);
+        const bladeMat = new THREE.MeshLambertMaterial({ color: 0x38bdf8 });
+        const sword = new THREE.Mesh(bladeGeo, bladeMat);
+        sword.position.set(0, 0.12, -0.1);
+        sword.rotation.set(0.6, -0.3, 0.2);
+        heldItemContainer.add(sword);
+        currentHeldMesh = sword;
+      }
+    };
+
+    // Initial held item render
+    updateHeldItemMesh();
+    updateHeldItemMeshRef.current = updateHeldItemMesh;
 
     const renderer = new THREE.WebGLRenderer({ antialias: activeSettings.graphics === 'fabulous' });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -516,8 +598,40 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     const performBreak = () => {
       if (pausedRef.current || inventoryOpenRef.current || chatOpenRef.current) return;
       const now = performance.now();
-      if (now - lastActionTimeRef.current < 280) return;
+      if (now - lastActionTimeRef.current < 220) return;
       lastActionTimeRef.current = now;
+
+      triggerHandSwing();
+
+      // Check if clicking an entity (mob/player attack)
+      if (entitiesMapRef.current) {
+        const ray = new THREE.Raycaster();
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        ray.set(camera.position, dir);
+        ray.far = 4.5;
+
+        const entityMeshes: THREE.Object3D[] = [];
+        const entityIdMap = new Map<THREE.Object3D, number>();
+        for (const [id, rent] of entitiesMapRef.current.entries()) {
+          entityMeshes.push(rent.group);
+          entityIdMap.set(rent.group, id);
+        }
+
+        const hits = ray.intersectObjects(entityMeshes, true);
+        if (hits.length > 0) {
+          let rootGroup = hits[0].object;
+          while (rootGroup.parent && !entityIdMap.has(rootGroup)) {
+            rootGroup = rootGroup.parent;
+          }
+          const eId = entityIdMap.get(rootGroup);
+          if (eId !== undefined && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            soundManager.playClick();
+            wsRef.current.send(JSON.stringify({ type: 'attackEntity', entityId: eId }));
+            return;
+          }
+        }
+      }
 
       const target = getRaycastTarget();
       if (!target) return;
@@ -552,9 +666,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         });
         highlightBox.visible = false;
       } else {
-        // Multiplayer: MUST SEND TO SERVER FIRST!
-        // DO NOT delete or alter blocks locally until server confirms with blockUpdate packet!
-        soundManager.playClick();
+        // Multiplayer: Send to server + optimistic audio feedback
+        soundManager.playDig(target.type);
+        spawnBlockParticles(target.x, target.y, target.z, target.type);
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(
             JSON.stringify({
@@ -572,8 +686,40 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     const performPlace = () => {
       if (pausedRef.current || inventoryOpenRef.current || chatOpenRef.current) return;
       const now = performance.now();
-      if (now - lastActionTimeRef.current < 280) return;
+      if (now - lastActionTimeRef.current < 220) return;
       lastActionTimeRef.current = now;
+
+      triggerHandSwing();
+
+      // Check if right clicking an entity
+      if (entitiesMapRef.current) {
+        const ray = new THREE.Raycaster();
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        ray.set(camera.position, dir);
+        ray.far = 4.5;
+
+        const entityMeshes: THREE.Object3D[] = [];
+        const entityIdMap = new Map<THREE.Object3D, number>();
+        for (const [id, rent] of entitiesMapRef.current.entries()) {
+          entityMeshes.push(rent.group);
+          entityIdMap.set(rent.group, id);
+        }
+
+        const hits = ray.intersectObjects(entityMeshes, true);
+        if (hits.length > 0) {
+          let rootGroup = hits[0].object;
+          while (rootGroup.parent && !entityIdMap.has(rootGroup)) {
+            rootGroup = rootGroup.parent;
+          }
+          const eId = entityIdMap.get(rootGroup);
+          if (eId !== undefined && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            soundManager.playClick();
+            wsRef.current.send(JSON.stringify({ type: 'useEntity', entityId: eId }));
+            return;
+          }
+        }
+      }
 
       const target = getRaycastTarget();
       if (!target) return;
@@ -623,10 +769,8 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
           return updated;
         });
       } else {
-        // Multiplayer: MUST SEND TO SERVER FIRST!
-        // DO NOT create block locally, DO NOT decrement inventory locally!
-        // Wait for server to confirm placement with blockUpdate & inventory packets!
-        soundManager.playClick();
+        // Multiplayer: Send place command + optimistic audio feedback
+        soundManager.playDig(currentItem.type);
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(
             JSON.stringify({
@@ -1127,6 +1271,23 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
             setTargetedBlock(null);
           }
         }
+      }
+
+      // Hand swing animation update
+      if (handSwingProgress > 0) {
+        handSwingProgress = Math.max(0, handSwingProgress - 0.08);
+        const swing = Math.sin(handSwingProgress * Math.PI);
+        handGroup.rotation.x = 0.1 - swing * 0.95;
+        handGroup.rotation.y = -0.2 - swing * 0.45;
+        handGroup.position.z = -0.55 + swing * 0.18;
+      } else {
+        const isMoving = keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD'] || touchMoveRef.current.forward || touchMoveRef.current.back;
+        const bobX = isMoving ? Math.sin(Date.now() * 0.008) * 0.025 : 0;
+        const bobY = Math.sin(Date.now() * 0.003) * 0.008 + (isMoving ? Math.cos(Date.now() * 0.016) * 0.025 : 0);
+        handGroup.position.x = 0.38 + bobX;
+        handGroup.position.y = -0.32 + bobY;
+        handGroup.position.z = -0.55;
+        handGroup.rotation.set(0.1, -0.2, 0);
       }
 
       renderer.render(scene, camera);

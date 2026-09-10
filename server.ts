@@ -1309,6 +1309,26 @@ async function startServer() {
             }
           }
 
+          // 6. Attack / Interact with Entity
+          else if (msg.type === "attackEntity" && msg.entityId && bot) {
+            try {
+              const target = bot.entities[msg.entityId];
+              if (target) {
+                bot.attack(target);
+                bot.swingArm("right");
+              }
+            } catch {}
+          }
+          else if (msg.type === "useEntity" && msg.entityId && bot) {
+            try {
+              const target = bot.entities[msg.entityId];
+              if (target) {
+                bot.activateEntity(target);
+                bot.swingArm("right");
+              }
+            } catch {}
+          }
+
           // 6. Request chunks manually
           else if (msg.type === "requestChunks" && bot.entity) {
             const curChunkX = Math.floor(bot.entity.position.x / 16);
