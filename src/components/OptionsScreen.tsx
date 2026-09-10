@@ -181,9 +181,9 @@ export function OptionsScreen({ onNavigate, settings, onUpdateSettings }: Option
         <button
           onClick={handleSave}
           onMouseEnter={() => soundManager.playFootstep()}
-          className="flex-1 py-3 bg-[#727272] hover:bg-[#858585] text-white border-2 border-t-[#b5b5b5] border-l-[#b5b5b5] border-b-[#3d3d3d] border-r-[#3d3d3d] text-2xl font-bold"
+          className="flex-1 py-3 bg-[#4a7c34] hover:bg-[#5b9640] active:bg-[#3d6929] text-white border-2 border-t-[#7ebd60] border-l-[#7ebd60] border-b-[#264417] border-r-[#264417] text-2xl font-bold shadow-xl flex items-center justify-center gap-2"
         >
-          Tamam (Save & Back)
+          💾 Ayarları Kaydet ve Tamam (Save & Back)
         </button>
       </div>
     </div>

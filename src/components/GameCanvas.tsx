@@ -185,6 +185,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
   const wsRef = useRef<WebSocket | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
+  const blocksMapRef = useRef<Map<string, THREE.Mesh> | null>(null);
   const entitiesMapRef = useRef<Map<number, RenderedEntity>>(new Map());
 
   // Synchronized refs to avoid re-initializing Three.js on UI toggles
@@ -311,6 +312,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
     // World Blocks map
     const worldSize = 32;
     const blocksMap = new Map<string, THREE.Mesh>();
+    blocksMapRef.current = blocksMap;
     const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
 
     // Material Cache: Shared materials across blocks to minimize WebGL state-changes and boost FPS to 60!
@@ -951,7 +953,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       }
 
       // Dynamic Chunk Culling (Unloads distant blocks to maintain high FPS)
-      if (frameCount % 120 === 0) {
+      if (frameCount % 30 === 0) {
         const limitDistSq = Math.pow(activeSettings.renderDistance * 16, 2);
         const camPos = camera.position;
         for (const [key, mesh] of blocksMap.entries()) {
@@ -1172,6 +1174,20 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
       }
       if (key === 'volume') {
         soundManager.setVolume(Number(value) / 100);
+      }
+      if (key === 'renderDistance' && cameraRef.current) {
+        // Immediate chunk culling when user lowers render distance
+        const newDistSq = Math.pow(Number(value) * 16, 2);
+        const camPos = cameraRef.current.position;
+        if (sceneRef.current && blocksMapRef.current) {
+          for (const [bKey, mesh] of blocksMapRef.current.entries()) {
+            if (mesh.position.distanceToSquared(camPos) > newDistSq) {
+              sceneRef.current.remove(mesh);
+              mesh.geometry.dispose();
+              blocksMapRef.current.delete(bKey);
+            }
+          }
+        }
       }
 
       return updated;
