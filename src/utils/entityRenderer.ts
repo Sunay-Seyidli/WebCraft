@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { MinecraftEntityData } from '../types';
+import { generateThreeTexture } from './textureGenerator';
 
 export interface RenderedEntity {
   group: THREE.Group;
@@ -203,13 +204,51 @@ export function createEntity3D(data: MinecraftEntityData): RenderedEntity {
 
   const isQuadruped = ['cow', 'sheep', 'pig'].includes(eName);
   const isCreeper = eName === 'creeper';
-  const isItem = eName === 'item';
+  const isItem = eName === 'item' || !!data.isItem;
 
   if (isItem) {
-    // Floating rotating dropped item
-    head = new THREE.Mesh(geoItem, getCachedMaterial(0x3b82f6));
+    // Floating rotating dropped item with real 16x16 pixel art texture
+    const itemTypeKey = data.itemType || 'diamond';
+    const itemTex = generateThreeTexture(itemTypeKey);
+    const itemMat = new THREE.MeshLambertMaterial({
+      map: itemTex,
+      transparent: true,
+      alphaTest: 0.1,
+    });
+    head = new THREE.Mesh(geoItem, itemMat);
     head.position.set(0, 0.25, 0);
     group.add(head);
+
+    // Add floating item name tag with count above the dropped item
+    const itemNameDisplay = data.itemName || data.itemType || 'Eşya';
+    const tagText = data.itemCount && data.itemCount > 1 ? `${itemNameDisplay} x${data.itemCount}` : itemNameDisplay;
+    const nameTag = createNameTagSprite(tagText, false);
+    nameTag.position.set(0, 0.65, 0);
+    nameTag.scale.set(1.4, 0.35, 1.0);
+    group.add(nameTag);
+
+    // Invisible interaction hitbox for easy pickup / interaction
+    const hitboxGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+    const hitboxMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 });
+    const hitboxMesh = new THREE.Mesh(hitboxGeo, hitboxMat);
+    hitboxMesh.position.set(0, 0.3, 0);
+    hitboxMesh.userData = { entityId: data.id };
+    group.userData = { entityId: data.id };
+    group.add(hitboxMesh);
+
+    return {
+      group,
+      data,
+      targetPos: new THREE.Vector3(data.x, data.y, data.z),
+      targetYaw: data.yaw || 0,
+      targetPitch: data.pitch || 0,
+      currentYaw: data.yaw || 0,
+      currentPitch: data.pitch || 0,
+      walkCycle: 0,
+      isMoving: false,
+      head,
+      nameTag,
+    };
   } else if (isQuadruped) {
     // Quadruped Model (Cow, Sheep, Pig)
     const body = new THREE.Mesh(geoQuadBody, getCachedMaterial(colors.body));
@@ -360,8 +399,8 @@ export function updateEntityTick(entity: RenderedEntity, delta: number = 0.016) 
   }
 
   // Dropped item rotation and bobbing
-  if (entity.data.name === 'item' && entity.head) {
-    entity.head.rotation.y += delta * 2;
-    entity.head.position.y = 0.25 + Math.sin(Date.now() * 0.004) * 0.08;
+  if ((entity.data.name === 'item' || entity.data.isItem) && entity.head) {
+    entity.head.rotation.y += delta * 2.5;
+    entity.head.position.y = 0.25 + Math.sin(Date.now() * 0.005) * 0.08;
   }
 }

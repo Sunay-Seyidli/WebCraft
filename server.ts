@@ -207,6 +207,31 @@ function serializeEntity(entity: any) {
     rawName === "marker" ||
     (rawName === "armor_stand" && !!cName);
 
+  let itemType = "";
+  let itemName = "";
+  let itemCount = 1;
+  const isItem = rawName === "item" || entity.type === "object" || entity.objectType === "Item";
+  if (isItem) {
+    const it = (entity as any).item || (entity as any).heldItem;
+    if (it) {
+      itemType = it.name || it.type || "";
+      itemName = it.displayName || it.name || itemType;
+      itemCount = it.count || 1;
+    } else if (entity.metadata && typeof entity.metadata === "object") {
+      for (const mKey of Object.keys(entity.metadata)) {
+        const v = entity.metadata[mKey];
+        if (v && typeof v === "object") {
+          if (v.name || v.itemId || v.id) {
+            itemType = v.name || String(v.itemId || v.id);
+            itemName = v.displayName || v.name || itemType;
+            itemCount = v.count || 1;
+            break;
+          }
+        }
+      }
+    }
+  }
+
   return {
     id: entity.id,
     name: isHologram && cName ? cName : (entity.name || entity.mobType || entity.type || "entity"),
@@ -214,6 +239,10 @@ function serializeEntity(entity: any) {
     username: entity.username || undefined,
     customName: cName || undefined,
     isHologram,
+    isItem,
+    itemType: itemType || undefined,
+    itemName: itemName || undefined,
+    itemCount: itemCount || 1,
     x: entity.position.x,
     y: entity.position.y,
     z: entity.position.z,
@@ -281,11 +310,20 @@ function getInventoryPayload(bot: any) {
 // Fast heightmap & surface block extractor for a 16x16 chunk column
 function extractChunkColumnBlocks(bot: any, chunkStartX: number, chunkStartZ: number) {
   const blocks: { x: number; y: number; z: number; type: string }[] = [];
+  if (!bot) return blocks;
+
+  // If bot has world and chunk column is not loaded yet, don't mark as empty
+  if (bot.world && typeof (bot.world as any).getColumn === "function") {
+    const col = (bot.world as any).getColumn(chunkStartX >> 4, chunkStartZ >> 4);
+    if (!col) return blocks;
+  }
+
   const playerY = bot.entity ? Math.floor(bot.entity.position.y) : 64;
   const vec = new Vec3(0, 0, 0);
 
-  const startY = Math.min(256, Math.max(80, playerY + 28));
-  const bottomY = Math.max(-60, playerY - 32);
+  // Full vanilla 1.21.4 vertical range coverage (supports caves, mountains, valleys)
+  const startY = Math.min(319, Math.max(140, playerY + 60));
+  const bottomY = Math.max(-64, playerY - 45);
 
   for (let x = chunkStartX; x < chunkStartX + 16; x++) {
     for (let z = chunkStartZ; z < chunkStartZ + 16; z++) {
@@ -303,11 +341,22 @@ function extractChunkColumnBlocks(bot: any, chunkStartX: number, chunkStartZ: nu
 
         consecutiveSolid++;
 
-        // Surface & slope blocks: keep top 8 solid block layers (plus transparent/liquid/leaves)
-        if (consecutiveSolid <= 8 || b.transparent || b.name.includes("water") || b.name.includes("lava") || b.name.includes("glass") || b.name.includes("leaves")) {
+        // Keep surface, terrain layers, liquids, leaves, doors, slabs, stairs
+        if (
+          consecutiveSolid <= 7 ||
+          b.transparent ||
+          b.name.includes("water") ||
+          b.name.includes("lava") ||
+          b.name.includes("glass") ||
+          b.name.includes("leaves") ||
+          b.name.includes("door") ||
+          b.name.includes("slab") ||
+          b.name.includes("stair") ||
+          b.name.includes("fence")
+        ) {
           blocks.push({ x, y, z, type: b.name });
-        } else {
-          // Solid underground interior reached
+        } else if (consecutiveSolid > 12) {
+          // Reached deep solid rock beneath ground
           break;
         }
       }
@@ -346,7 +395,7 @@ function streamChunksAround(
   ws: WebSocket,
   playerChunkX: number,
   playerChunkZ: number,
-  chunkRadius = 2,
+  chunkRadius = 3,
   sentChunks?: Set<string>
 ) {
   if (ws.readyState !== WebSocket.OPEN || !bot) return;
@@ -371,11 +420,11 @@ function streamChunksAround(
     const { cx, cz } = chunksToStream[idx++];
     const key = `${cx},${cz}`;
     if (!sentChunks || !sentChunks.has(key)) {
-      if (sentChunks) sentChunks.add(key);
       const chunkStartX = cx * 16;
       const chunkStartZ = cz * 16;
       const blocks = extractChunkColumnBlocks(bot, chunkStartX, chunkStartZ);
       if (blocks.length > 0) {
+        if (sentChunks) sentChunks.add(key);
         ws.send(
           JSON.stringify({
             type: "blocks",
@@ -387,10 +436,7 @@ function streamChunksAround(
         );
       }
     }
-    // Stagger chunks across ticks (15ms) to prevent freezing Node.js event loop
-    if (idx < chunksToStream.length) {
-      setTimeout(processNextChunk, 15);
-    }
+    setTimeout(processNextChunk, 8);
   };
 
   processNextChunk();
@@ -1345,7 +1391,16 @@ async function startServer() {
             ) {
               lastPlayerChunkX = curChunkX;
               lastPlayerChunkZ = curChunkZ;
-              streamChunksAround(bot, ws, curChunkX, curChunkZ, 2, sentChunks);
+
+              // Prune distant chunks from sent set so player can re-visit previously loaded areas seamlessly
+              for (const chunkKey of sentChunks) {
+                const [cx, cz] = chunkKey.split(",").map(Number);
+                if (Math.abs(cx - curChunkX) > 5 || Math.abs(cz - curChunkZ) > 5) {
+                  sentChunks.delete(chunkKey);
+                }
+              }
+
+              streamChunksAround(bot, ws, curChunkX, curChunkZ, 3, sentChunks);
             }
           }
 
@@ -1415,25 +1470,40 @@ async function startServer() {
             // Direct packet sender for 1.21.4 and older versions
             const sendDirectDigPackets = () => {
               if (bot._client && bot._client.state === "play") {
+                // 1. Modern 1.19 to 1.21.4 protocol uses player_action
                 try {
-                  // status 0: start destroy block (instant break in creative)
-                  bot._client.write("block_dig", {
-                    status: 0,
+                  bot._client.write("player_action", {
+                    action: 0, // start destroy block
                     location: { x: bx, y: by, z: bz },
-                    face: 1,
                     direction: 1,
                     sequence: 0,
                   });
-                  // status 2: finish destroy block
-                  bot._client.write("block_dig", {
-                    status: 2,
+                  bot._client.write("player_action", {
+                    action: 2, // finish destroy block
                     location: { x: bx, y: by, z: bz },
-                    face: 1,
                     direction: 1,
                     sequence: 0,
                   });
-                } catch (e: any) {
-                  console.warn("[MC Bridge] direct dig packet error:", e.message);
+                } catch {
+                  // 2. Legacy fallback to block_dig
+                  try {
+                    bot._client.write("block_dig", {
+                      status: 0,
+                      location: { x: bx, y: by, z: bz },
+                      face: 1,
+                      direction: 1,
+                      sequence: 0,
+                    });
+                    bot._client.write("block_dig", {
+                      status: 2,
+                      location: { x: bx, y: by, z: bz },
+                      face: 1,
+                      direction: 1,
+                      sequence: 0,
+                    });
+                  } catch (e: any) {
+                    console.warn("[MC Bridge] direct dig packet error:", e.message);
+                  }
                 }
               }
             };
@@ -1442,9 +1512,14 @@ async function startServer() {
               if (bot.targetDigBlock) {
                 try { bot.stopDigging(); } catch {}
               }
-              bot.dig(b).catch(() => {
+              try {
+                // Mineflayer dig with 'ignore' look requirement
+                bot.dig(b, "ignore").catch(() => {
+                  sendDirectDigPackets();
+                });
+              } catch {
                 sendDirectDigPackets();
-              });
+              }
             } else {
               sendDirectDigPackets();
             }
@@ -1517,9 +1592,9 @@ async function startServer() {
 
             const sendDirectPlacePacket = () => {
               if (bot._client && bot._client.state === "play") {
+                // 1. Modern 1.19 - 1.21.4 packet is "use_item_on"
                 try {
-                  // 1.21.4 format
-                  bot._client.write("block_place", {
+                  bot._client.write("use_item_on", {
                     hand: 0,
                     location: { x: bx, y: by, z: bz },
                     direction: direction,
@@ -1531,17 +1606,31 @@ async function startServer() {
                     sequence: 0,
                   });
                 } catch {
+                  // 2. Fallback to block_place
                   try {
-                    // Older legacy format
                     bot._client.write("block_place", {
                       hand: 0,
                       location: { x: bx, y: by, z: bz },
                       direction: direction,
-                      cursorX: Math.floor((0.5 + face.x * 0.5) * 16),
-                      cursorY: Math.floor((0.5 + face.y * 0.5) * 16),
-                      cursorZ: Math.floor((0.5 + face.z * 0.5) * 16),
+                      cursorX: 0.5 + face.x * 0.5,
+                      cursorY: 0.5 + face.y * 0.5,
+                      cursorZ: 0.5 + face.z * 0.5,
+                      insideBlock: false,
+                      worldBorderHit: false,
+                      sequence: 0,
                     });
-                  } catch {}
+                  } catch {
+                    try {
+                      bot._client.write("block_place", {
+                        hand: 0,
+                        location: { x: bx, y: by, z: bz },
+                        direction: direction,
+                        cursorX: Math.floor((0.5 + face.x * 0.5) * 16),
+                        cursorY: Math.floor((0.5 + face.y * 0.5) * 16),
+                        cursorZ: Math.floor((0.5 + face.z * 0.5) * 16),
+                      });
+                    } catch {}
+                  }
                 }
               }
             };
@@ -1648,7 +1737,8 @@ async function startServer() {
           else if (msg.type === "requestChunks" && bot.entity) {
             const curChunkX = Math.floor(bot.entity.position.x / 16);
             const curChunkZ = Math.floor(bot.entity.position.z / 16);
-            streamChunksAround(bot, ws, curChunkX, curChunkZ, 2, sentChunks);
+            sentChunks.clear();
+            streamChunksAround(bot, ws, curChunkX, curChunkZ, 3, sentChunks);
           }
         } catch (e: any) {
           // ignore invalid JSON

@@ -4,6 +4,9 @@ import { WorldInfo, ServerInfo, GameSettings, ChatMessage, BlockType, InventoryI
 import { soundManager } from '../utils/audio';
 import { blockTextures, initTextures, mapMinecraftBlock } from '../utils/textures';
 import { createEntity3D, updateEntityTick, RenderedEntity } from '../utils/entityRenderer';
+import { generateItemTextureUrl, generateThreeTexture } from '../utils/textureGenerator';
+import { ItemTooltip } from './ItemTooltip';
+import { MinecraftHud } from './MinecraftHud';
 
 interface GameCanvasProps {
   world?: WorldInfo;
@@ -12,13 +15,16 @@ interface GameCanvasProps {
   onExit: () => void;
 }
 
-export const BLOCK_NAMES: Record<BlockType, string> = {
+export const BLOCK_NAMES: Record<string, string> = {
   air: 'Hava',
   grass: 'Çimen Bloğu',
+  grass_block: 'Çimen Bloğu',
   dirt: 'Toprak',
   stone: 'Taş',
   cobblestone: 'Kırıktaş',
+  deepslate: 'Derintaş (Deepslate)',
   oak_planks: 'Meşe Tahtası',
+  cherry_planks: 'Kiraz Tahtası',
   oak_log: 'Meşe Kütüğü',
   oak_leaves: 'Meşe Yaprakları',
   bricks: 'Tuğla',
@@ -29,6 +35,8 @@ export const BLOCK_NAMES: Record<BlockType, string> = {
   sand: 'Kum',
   diamond_ore: 'Elmas Cevheri',
   gold_ore: 'Altın Cevheri',
+  iron_ore: 'Demir Cevheri',
+  coal_ore: 'Kömür Cevheri',
   obsidian: 'Obsidyen',
   iron_block: 'Demir Bloğu',
   crafting_table: 'Çalışma Masası',
@@ -37,19 +45,121 @@ export const BLOCK_NAMES: Record<BlockType, string> = {
   bookshelf: 'Kitaplık',
   tnt: 'TNT',
   netherrack: 'Nether Taşı',
-  glowstone: 'Işık Taşı'
+  glowstone: 'Işık Taşı',
+  // 1.21.4 Tricky Trials & Combat
+  mace: 'Balyoz (Mace)',
+  wind_charge: 'Rüzgar Topu (Wind Charge)',
+  breeze_rod: 'Rüzgar Çubuğu (Breeze Rod)',
+  heavy_core: 'Ağır Çekirdek (Heavy Core)',
+  trial_key: 'Mahzen Anahtarı (Trial Key)',
+  ominous_trial_key: 'Uğursuz Mahzen Anahtarı',
+  crafter: 'Otomatik Üretici (Crafter)',
+  copper_bulb: 'Bakır Ampul (Copper Bulb)',
+  copper_grate: 'Bakır Izgara (Copper Grate)',
+  tuff_bricks: 'Tüf Tuğlası (Tuff Bricks)',
+  ender_pearl: 'Ender İncisi',
+  eye_of_ender: 'Ender Gözü',
+  totem_of_undying: 'Ölümsüzlük Totemi',
+  netherite_sword: 'Netherit Kılıç',
+  netherite_pickaxe: 'Netherit Kazma',
+  diamond_sword: 'Elmas Kılıç',
+  diamond_pickaxe: 'Elmas Kazma',
+  diamond_axe: 'Elmas Balta',
+  bow: 'Yay',
+  arrow: 'Ok',
+  shield: 'Kalkan',
+  trident: 'Zıpkın (Trident)',
+  golden_apple: 'Altın Elma',
+  enchanted_golden_apple: 'Büyülü Altın Elma',
+  apple: 'Elma',
+  bread: 'Ekmek',
+  cooked_beef: 'Pişmiş Biftek',
+  golden_carrot: 'Altın Havuç',
+  diamond: 'Elmas',
+  emerald: 'Zümrüt',
+  netherite_ingot: 'Netherit Külçesi',
+  gold_ingot: 'Altın Külçesi',
+  iron_ingot: 'Demir Külçesi'
 };
 
 const initialHotbarItems: InventoryItem[] = [
+  { type: 'mace', count: 1, name: 'Balyoz' },
+  { type: 'wind_charge', count: 64, name: 'Rüzgar Topu' },
+  { type: 'ender_pearl', count: 16, name: 'Ender İncisi' },
+  { type: 'diamond_sword', count: 1, name: 'Elmas Kılıç' },
+  { type: 'diamond_pickaxe', count: 1, name: 'Elmas Kazma' },
+  { type: 'golden_apple', count: 64, name: 'Altın Elma' },
+  { type: 'grass', count: 64, name: 'Çimen Bloğu' },
+  { type: 'oak_planks', count: 64, name: 'Meşe Tahtası' },
+  { type: 'cobblestone', count: 64, name: 'Kırıktaş' },
+];
+
+export const creativeInventoryList: InventoryItem[] = [
+  // 1.21.4 Tricky Trials & Weapons
+  { type: 'mace', count: 1, name: 'Balyoz' },
+  { type: 'wind_charge', count: 64, name: 'Rüzgar Topu' },
+  { type: 'breeze_rod', count: 64, name: 'Rüzgar Çubuğu' },
+  { type: 'heavy_core', count: 64, name: 'Ağır Çekirdek' },
+  { type: 'trial_key', count: 64, name: 'Mahzen Anahtarı' },
+  { type: 'ominous_trial_key', count: 64, name: 'Uğursuz Mahzen Anahtarı' },
+  { type: 'crafter', count: 64, name: 'Otomatik Üretici (Crafter)' },
+  { type: 'copper_bulb', count: 64, name: 'Bakır Ampul' },
+  { type: 'copper_grate', count: 64, name: 'Bakır Izgara' },
+  { type: 'tuff_bricks', count: 64, name: 'Tüf Tuğlası' },
+
+  // Weapons, Tools & Combat
+  { type: 'ender_pearl', count: 16, name: 'Ender İncisi' },
+  { type: 'eye_of_ender', count: 64, name: 'Ender Gözü' },
+  { type: 'totem_of_undying', count: 1, name: 'Ölümsüzlük Totemi' },
+  { type: 'netherite_sword', count: 1, name: 'Netherit Kılıç' },
+  { type: 'diamond_sword', count: 1, name: 'Elmas Kılıç' },
+  { type: 'diamond_pickaxe', count: 1, name: 'Elmas Kazma' },
+  { type: 'netherite_pickaxe', count: 1, name: 'Netherit Kazma' },
+  { type: 'diamond_axe', count: 1, name: 'Elmas Balta' },
+  { type: 'bow', count: 1, name: 'Yay' },
+  { type: 'arrow', count: 64, name: 'Ok' },
+  { type: 'shield', count: 1, name: 'Kalkan' },
+  { type: 'trident', count: 1, name: 'Zıpkın (Trident)' },
+
+  // Food
+  { type: 'golden_apple', count: 64, name: 'Altın Elma' },
+  { type: 'enchanted_golden_apple', count: 64, name: 'Büyülü Altın Elma' },
+  { type: 'apple', count: 64, name: 'Elma' },
+  { type: 'bread', count: 64, name: 'Ekmek' },
+  { type: 'cooked_beef', count: 64, name: 'Pişmiş Biftek' },
+  { type: 'golden_carrot', count: 64, name: 'Altın Havuç' },
+
+  // Minerals & Valuables
+  { type: 'diamond', count: 64, name: 'Elmas' },
+  { type: 'emerald', count: 64, name: 'Zümrüt' },
+  { type: 'netherite_ingot', count: 64, name: 'Netherit Külçesi' },
+  { type: 'gold_ingot', count: 64, name: 'Altın Külçesi' },
+  { type: 'iron_ingot', count: 64, name: 'Demir Külçesi' },
+
+  // Blocks
   { type: 'grass', count: 64, name: 'Çimen Bloğu' },
   { type: 'dirt', count: 64, name: 'Toprak' },
   { type: 'stone', count: 64, name: 'Taş' },
   { type: 'cobblestone', count: 64, name: 'Kırıktaş' },
+  { type: 'deepslate', count: 64, name: 'Derintaş (Deepslate)' },
   { type: 'oak_planks', count: 64, name: 'Meşe Tahtası' },
-  { type: 'oak_log', count: 32, name: 'Meşe Kütüğü' },
+  { type: 'cherry_planks', count: 64, name: 'Kiraz Tahtası' },
+  { type: 'oak_log', count: 64, name: 'Meşe Kütüğü' },
+  { type: 'oak_leaves', count: 64, name: 'Meşe Yaprakları' },
   { type: 'bricks', count: 64, name: 'Tuğla' },
   { type: 'glass', count: 64, name: 'Cam' },
-  { type: 'diamond_ore', count: 16, name: 'Elmas Cevheri' },
+  { type: 'sand', count: 64, name: 'Kum' },
+  { type: 'obsidian', count: 64, name: 'Obsidyen' },
+  { type: 'tnt', count: 64, name: 'TNT' },
+  { type: 'crafting_table', count: 64, name: 'Çalışma Masası' },
+  { type: 'furnace', count: 64, name: 'Fırın' },
+  { type: 'bookshelf', count: 64, name: 'Kitaplık' },
+  { type: 'glowstone', count: 64, name: 'Işık Taşı' },
+  { type: 'diamond_ore', count: 64, name: 'Elmas Cevheri' },
+  { type: 'gold_ore', count: 64, name: 'Altın Cevheri' },
+  { type: 'iron_ore', count: 64, name: 'Demir Cevheri' },
+  { type: 'coal_ore', count: 64, name: 'Kömür Cevheri' },
+  { type: 'bedrock', count: 64, name: 'Katman Kayası (Bedrock)' },
 ];
 
 export interface BlockData {
@@ -117,6 +227,9 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
   const [selectedHotbarIndex, setSelectedHotbarIndex] = useState(0);
   const [health, setHealth] = useState(20);
   const [hunger, setHunger] = useState(20);
+  const [xpLevel, setXpLevel] = useState(7);
+  const [xpProgress, setXpProgress] = useState(0.68);
+  const [hoveredItem, setHoveredItem] = useState<{ type: string; name: string; count: number; x: number; y: number } | null>(null);
   const [fps, setFps] = useState(60);
 
   // Live customizable settings and diagnostics
@@ -449,12 +562,7 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         return materialCache.get(type)!;
       }
 
-      const tex = blockTextures[type];
-      if (!tex) {
-        const fallbackMat = new THREE.MeshLambertMaterial({ color: 0x888888 });
-        materialCache.set(type, fallbackMat);
-        return fallbackMat;
-      }
+      const tex = blockTextures[type] || generateThreeTexture(type);
 
       let mats: THREE.Material | THREE.Material[];
       if ('top' in tex) {
@@ -895,11 +1003,100 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         }
       }
 
-      const target = getRaycastTarget();
-      if (!target) return;
-
       let activeSlot = selectedHotbarIndexRef.current;
       let currentItem = hotbarRef.current[activeSlot];
+
+      // Handle Special Interactive 1.21.4 Items (Ender Pearl, Wind Charge, Bow, Food)
+      // Executed anywhere (even when looking at sky/air)
+      if (currentItem && currentItem.count > 0 && currentItem.type !== 'air') {
+        const itemType = currentItem.type.toLowerCase();
+
+        // 1. Ender Pearl (Işınlanma)
+        if (itemType.includes('ender_pearl') || itemType.includes('pearl')) {
+          soundManager.playPop();
+          const forwardVec = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
+          const teleX = Math.round(player.x + forwardVec.x * 14);
+          const teleY = Math.max(1, Math.round(player.y + forwardVec.y * 14));
+          const teleZ = Math.round(player.z + forwardVec.z * 14);
+
+          player.x = teleX;
+          player.y = teleY;
+          player.z = teleZ;
+          player.vx = 0;
+          player.vy = 0;
+          player.vz = 0;
+          camera.position.set(teleX, teleY + 1.62, teleZ);
+
+          spawnBlockParticles(teleX, teleY, teleZ, 'obsidian');
+          setActionBarText('Ender İncisi fırlatıldı! Hedefe ışınlanıldı.');
+
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'useItem', slot: activeSlot }));
+          }
+
+          setHotbar((prev) => {
+            const updated = [...prev];
+            if (updated[activeSlot] && updated[activeSlot].count > 0) {
+              const newCount = updated[activeSlot].count - 1;
+              updated[activeSlot] = newCount > 0 ? { ...updated[activeSlot], count: newCount } : { type: 'air', count: 0, name: 'Boş' };
+            }
+            return updated;
+          });
+          return;
+        }
+
+        // 2. Wind Charge (Rüzgar Topu - 1.21.4 Super Jump & Knockback)
+        if (itemType.includes('wind_charge') || itemType.includes('wind')) {
+          soundManager.playExplosion();
+          player.vy = 0.52; // Massive wind burst jump!
+          const forwardVec = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
+          player.vx = forwardVec.x * 0.25;
+          player.vz = forwardVec.z * 0.25;
+
+          spawnBlockParticles(player.x, player.y, player.z, 'glass');
+          setActionBarText('Rüzgar Topu (Wind Charge) patlatıldı! 💨');
+
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'useItem', slot: activeSlot }));
+          }
+
+          setHotbar((prev) => {
+            const updated = [...prev];
+            if (updated[activeSlot] && updated[activeSlot].count > 0) {
+              const newCount = updated[activeSlot].count - 1;
+              updated[activeSlot] = newCount > 0 ? { ...updated[activeSlot], count: newCount } : { type: 'air', count: 0, name: 'Boş' };
+            }
+            return updated;
+          });
+          return;
+        }
+
+        // 3. Food (Apple, Golden Apple, Bread, Cooked Beef, Golden Carrot)
+        if (itemType.includes('apple') || itemType.includes('bread') || itemType.includes('beef') || itemType.includes('steak') || itemType.includes('carrot') || itemType.includes('cookie')) {
+          soundManager.playPop();
+          const isGolden = itemType.includes('gold') || itemType.includes('enchanted');
+          setHunger((prev) => Math.min(20, prev + (isGolden ? 6 : 4)));
+          setHealth((prev) => Math.min(20, prev + (isGolden ? 8 : 2)));
+          setActionBarText(`Lezzetli! ${currentItem.name || currentItem.type} yendi.`);
+
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'useItem', slot: activeSlot }));
+          }
+
+          setHotbar((prev) => {
+            const updated = [...prev];
+            if (updated[activeSlot] && updated[activeSlot].count > 0) {
+              const newCount = updated[activeSlot].count - 1;
+              updated[activeSlot] = newCount > 0 ? { ...updated[activeSlot], count: newCount } : { type: 'air', count: 0, name: 'Boş' };
+            }
+            return updated;
+          });
+          return;
+        }
+      }
+
+      const target = getRaycastTarget();
+      if (!target) return;
 
       // Auto-select valid block if active slot is air
       if (!currentItem || currentItem.count <= 0 || currentItem.type === 'air') {
@@ -1888,27 +2085,25 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
         </button>
       </div>
 
-      {/* HUD: Hearts & Hunger */}
-      <div className="absolute bottom-14 sm:bottom-16 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none z-20">
-        {/* Hearts */}
-        <div className="flex gap-0.5 sm:gap-1">
-          {Array.from({ length: 10 }).map((_, i) => (
-            <div key={i} className={`w-3 h-3 sm:w-4 sm:h-4 ${i < health / 2 ? 'bg-red-600' : 'bg-gray-600'} border border-black transform rotate-45`} />
-          ))}
-        </div>
-        {/* Hunger */}
-        <div className="flex gap-0.5 sm:gap-1">
-          {Array.from({ length: 10 }).map((_, i) => (
-            <div key={i} className={`w-3 h-3 sm:w-4 sm:h-4 ${i < hunger / 2 ? 'bg-amber-700' : 'bg-gray-600'} border border-black rounded-full`} />
-          ))}
-        </div>
+      {/* Authentic Minecraft HUD: Hearts, Hunger, Armor & Experience (XP) Bar */}
+      <div className="absolute bottom-13 sm:bottom-15 left-1/2 -translate-x-1/2 pointer-events-none z-20">
+        <MinecraftHud
+          health={health}
+          food={hunger}
+          xpLevel={xpLevel}
+          xpProgress={xpProgress}
+        />
       </div>
 
-      {/* Hotbar (Centered at bottom, compact) */}
-      <div className="absolute bottom-1.5 sm:bottom-3 left-1/2 -translate-x-1/2 bg-[#3c3c3c]/95 border-2 border-[#222] p-0.5 flex gap-0.5 shadow-2xl z-30 max-w-[94vw] rounded overflow-x-auto">
+      {/* Item Tooltip Popup */}
+      {hoveredItem && <ItemTooltip {...hoveredItem} />}
+
+      {/* Hotbar (Centered at bottom, pixel-art textures & tooltips) */}
+      <div className="absolute bottom-1.5 sm:bottom-3 left-1/2 -translate-x-1/2 bg-[#2c2c2c]/95 border-2 border-[#181818] p-1 flex gap-1 shadow-2xl z-30 max-w-[96vw] rounded select-none">
         {hotbar.map((item, index) => {
           const isSelected = index === selectedHotbarIndex;
           const hasItem = item && item.type !== 'air' && item.count > 0;
+          const displayName = item.name || BLOCK_NAMES[item.type] || item.type;
           return (
             <div
               key={index}
@@ -1916,16 +2111,40 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
                 soundManager.playClick();
                 handleSelectHotbarSlot(index);
               }}
-              className={`relative w-8 h-8 sm:w-11 sm:h-11 bg-[#8b8b8b] border cursor-pointer flex items-center justify-center flex-shrink-0 transition-all ${
-                isSelected ? 'border-white scale-105 bg-[#a3a3a3] shadow-lg ring-2 ring-yellow-400/80' : 'border-[#373737] hover:border-gray-400'
+              onMouseEnter={(e) => {
+                if (hasItem) {
+                  setHoveredItem({
+                    type: item.type,
+                    name: displayName,
+                    count: item.count,
+                    x: e.clientX,
+                    y: e.clientY,
+                  });
+                }
+              }}
+              onMouseMove={(e) => {
+                if (hasItem) {
+                  setHoveredItem((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : null));
+                }
+              }}
+              onMouseLeave={() => setHoveredItem(null)}
+              className={`relative w-9 h-9 sm:w-11 sm:h-11 bg-[#8b8b8b] border-2 cursor-pointer flex items-center justify-center flex-shrink-0 transition-all ${
+                isSelected 
+                  ? 'border-white scale-105 bg-[#a8a8a8] shadow-lg ring-2 ring-yellow-400/90' 
+                  : 'border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] hover:brightness-110'
               }`}
             >
-              <div className="text-[9px] font-bold text-yellow-300 absolute top-0.5 left-0.5">{index + 1}</div>
-              <div className="text-[9px] sm:text-[10px] uppercase font-bold text-center text-white px-0.5 truncate">
-                {hasItem ? item.type.slice(0, 3) : ''}
-              </div>
+              <div className="text-[9px] font-bold text-yellow-300 absolute top-0.5 left-0.5 drop-shadow pointer-events-none">{index + 1}</div>
               {hasItem && (
-                <div className="text-[9px] font-bold text-white absolute bottom-0.5 right-0.5 bg-black/70 px-0.5 rounded-sm">
+                <img
+                  src={generateItemTextureUrl(item.type)}
+                  alt={displayName}
+                  className="w-7 h-7 sm:w-8 sm:h-8 object-contain pointer-events-none drop-shadow"
+                  style={{ imageRendering: 'pixelated' }}
+                />
+              )}
+              {hasItem && item.count > 1 && (
+                <div className="text-[10px] font-bold text-white absolute bottom-0.5 right-0.5 bg-black/80 px-1 rounded-sm leading-none pointer-events-none drop-shadow">
                   {item.count}
                 </div>
               )}
@@ -2173,55 +2392,122 @@ export function GameCanvas({ world, server, settings, onExit }: GameCanvasProps)
 
             {/* Hotbar Section */}
             <div>
-              <div className="text-xs sm:text-sm font-bold text-gray-700 mb-1">Hızlı Erişim (Hotbar 1-9)</div>
-              <div className="grid grid-cols-9 gap-1 sm:gap-1.5 bg-[#8b8b8b] p-1.5 sm:p-2.5 border-2 border-inset border-gray-600 rounded">
-                {hotbar.map((item, idx) => (
-                  <div 
-                    key={`hb-${idx}`}
-                    onClick={() => {
-                      soundManager.playPop();
-                      handleSelectHotbarSlot(idx);
-                    }}
-                    className={`w-7 h-7 sm:w-11 sm:h-11 bg-[#c6c6c6] border-2 cursor-pointer flex flex-col items-center justify-center text-[9px] sm:text-xs font-bold transition-transform ${
-                      idx === selectedHotbarIndex ? 'border-yellow-500 bg-yellow-100 scale-105 shadow' : 'border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] hover:bg-gray-300'
-                    }`}
-                  >
-                    <span className="truncate w-full text-center px-0.5">{item.type !== 'air' ? item.type.slice(0, 4) : ''}</span>
-                    {item.count > 0 && <span className="text-blue-900">{item.count}</span>}
-                  </div>
-                ))}
+              <div className="text-xs sm:text-sm font-bold text-gray-800 mb-1">Hızlı Erişim (Hotbar 1-9)</div>
+              <div className="grid grid-cols-9 gap-1 sm:gap-1.5 bg-[#8b8b8b] p-1.5 sm:p-2 border-2 border-inset border-gray-600 rounded">
+                {hotbar.map((item, idx) => {
+                  const hasItem = item && item.type !== 'air' && item.count > 0;
+                  const displayName = item.name || BLOCK_NAMES[item.type] || item.type;
+                  return (
+                    <div 
+                      key={`hb-${idx}`}
+                      onClick={() => {
+                        soundManager.playPop();
+                        handleSelectHotbarSlot(idx);
+                      }}
+                      onMouseEnter={(e) => {
+                        if (hasItem) {
+                          setHoveredItem({
+                            type: item.type,
+                            name: displayName,
+                            count: item.count,
+                            x: e.clientX,
+                            y: e.clientY,
+                          });
+                        }
+                      }}
+                      onMouseMove={(e) => {
+                        if (hasItem) {
+                          setHoveredItem((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : null));
+                        }
+                      }}
+                      onMouseLeave={() => setHoveredItem(null)}
+                      className={`relative w-8 h-8 sm:w-11 sm:h-11 bg-[#c6c6c6] border-2 cursor-pointer flex items-center justify-center transition-transform ${
+                        idx === selectedHotbarIndex ? 'border-yellow-500 bg-yellow-100 scale-105 shadow' : 'border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] hover:brightness-105'
+                      }`}
+                    >
+                      {hasItem && (
+                        <img
+                          src={generateItemTextureUrl(item.type)}
+                          alt={displayName}
+                          className="w-6 h-6 sm:w-8 sm:h-8 object-contain pointer-events-none drop-shadow"
+                          style={{ imageRendering: 'pixelated' }}
+                        />
+                      )}
+                      {hasItem && item.count > 1 && (
+                        <span className="absolute bottom-0.5 right-0.5 text-[9px] sm:text-[10px] font-black text-white bg-black/80 px-0.5 rounded leading-none pointer-events-none drop-shadow">
+                          {item.count}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
             {/* Main Inventory Section */}
             <div>
-              <div className="text-xs sm:text-sm font-bold text-gray-700 mb-1">
-                {server ? 'Sunucu Envanteri (Minecraft)' : 'Yaratıcı Envanter'}
+              <div className="flex justify-between items-center text-xs sm:text-sm font-bold text-gray-800 mb-1">
+                <span>{server && serverInventory.length > 0 ? 'Sunucu Envanteri (Minecraft)' : '1.21.4 Yaratıcı Envanter (Tüm Eşyalar)'}</span>
+                <span className="text-[10px] sm:text-xs text-gray-600 font-normal">Tıkla ve Seçili Slota Ekle</span>
               </div>
-              <div className="grid grid-cols-9 gap-1 sm:gap-1.5 bg-[#8b8b8b] p-1.5 sm:p-2.5 border-2 border-inset border-gray-600 rounded max-h-[35vh] overflow-y-auto">
-                {(server 
-                  ? (serverInventory.length > 0 ? serverInventory : Array.from({ length: 27 }, () => ({ type: 'air' as BlockType, count: 0, name: 'Boş' })))
-                  : (serverInventory.length > 0 ? serverInventory : initialHotbarItems)
-                ).map((item, idx) => (
-                  <div 
-                    key={`inv-${idx}`}
-                    onClick={() => {
-                      if (item.type !== 'air') {
-                        soundManager.playPop();
-                        handleSelectHotbarSlot(idx % 9);
-                      }
-                    }}
-                    className={`w-7 h-7 sm:w-11 sm:h-11 bg-[#c6c6c6] border-2 border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] flex flex-col items-center justify-center text-[9px] sm:text-xs font-bold ${
-                      item.type !== 'air' ? 'cursor-pointer hover:bg-gray-300' : 'cursor-default opacity-50'
-                    }`}
-                    title={item.name || item.type}
-                  >
-                    <span className="truncate w-full text-center px-0.5 text-black">
-                      {item.type !== 'air' ? (item.name || item.type).slice(0, 5) : ''}
-                    </span>
-                    {item.count > 0 && <span className="text-blue-900 font-extrabold">{item.count}</span>}
-                  </div>
-                ))}
+              <div className="grid grid-cols-9 gap-1 sm:gap-1.5 bg-[#8b8b8b] p-1.5 sm:p-2 border-2 border-inset border-gray-600 rounded max-h-[38vh] overflow-y-auto">
+                {(server && serverInventory.length > 0 
+                  ? serverInventory 
+                  : creativeInventoryList
+                ).map((item, idx) => {
+                  const hasItem = item && item.type !== 'air' && item.count > 0;
+                  const displayName = item.name || BLOCK_NAMES[item.type] || item.type;
+                  return (
+                    <div 
+                      key={`inv-${idx}`}
+                      onClick={() => {
+                        if (hasItem) {
+                          soundManager.playPop();
+                          setHotbar((prev) => {
+                            const updated = [...prev];
+                            updated[selectedHotbarIndex] = { ...item };
+                            return updated;
+                          });
+                          setActionBarText(`${displayName} eline alındı (Slot ${selectedHotbarIndex + 1})`);
+                        }
+                      }}
+                      onMouseEnter={(e) => {
+                        if (hasItem) {
+                          setHoveredItem({
+                            type: item.type,
+                            name: displayName,
+                            count: item.count,
+                            x: e.clientX,
+                            y: e.clientY,
+                          });
+                        }
+                      }}
+                      onMouseMove={(e) => {
+                        if (hasItem) {
+                          setHoveredItem((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : null));
+                        }
+                      }}
+                      onMouseLeave={() => setHoveredItem(null)}
+                      className={`relative w-8 h-8 sm:w-11 sm:h-11 bg-[#c6c6c6] border-2 border-t-[#373737] border-l-[#373737] border-b-[#fff] border-r-[#fff] flex items-center justify-center ${
+                        hasItem ? 'cursor-pointer hover:bg-gray-200 hover:brightness-110 active:scale-95' : 'cursor-default opacity-40'
+                      }`}
+                    >
+                      {hasItem && (
+                        <img
+                          src={generateItemTextureUrl(item.type)}
+                          alt={displayName}
+                          className="w-6 h-6 sm:w-8 sm:h-8 object-contain pointer-events-none drop-shadow"
+                          style={{ imageRendering: 'pixelated' }}
+                        />
+                      )}
+                      {hasItem && item.count > 1 && (
+                        <span className="absolute bottom-0.5 right-0.5 text-[9px] sm:text-[10px] font-black text-white bg-black/80 px-0.5 rounded leading-none pointer-events-none drop-shadow">
+                          {item.count}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

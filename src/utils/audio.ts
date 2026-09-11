@@ -119,6 +119,40 @@ class SoundManager {
     this.playOgg('/sounds/damage/hit1.ogg', 0.8);
   }
 
+  // Explosion / Wind charge sound
+  public playExplosion() {
+    if (this.isThrottled('explode', 150)) return;
+    this.playOgg('/sounds/random/explode.ogg', 0.9).then((success) => {
+      if (!success) this.playSynthExplosion();
+    });
+  }
+
+  private playSynthExplosion() {
+    try {
+      this.initCtx();
+      if (!this.ctx) return;
+      const bufferSize = this.ctx.sampleRate * 0.4;
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.25));
+      }
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buffer;
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(350, this.ctx.currentTime);
+      filter.frequency.exponentialRampToValueAtTime(60, this.ctx.currentTime + 0.35);
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(this.volume * 0.9, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.38);
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.ctx.destination);
+      noise.start();
+    } catch {}
+  }
+
   // --- Procedural Fallbacks ---
   private playSynthClick() {
     try {

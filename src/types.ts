@@ -86,6 +86,10 @@ export interface MinecraftEntityData {
   username?: string;
   customName?: string;
   isHologram?: boolean;
+  isItem?: boolean;
+  itemType?: string;
+  itemName?: string;
+  itemCount?: number;
   x: number;
   y: number;
   z: number;
@@ -96,7 +100,7 @@ export interface MinecraftEntityData {
   health?: number;
 }
 
-export type BlockType = 
+export type StandardBlockType = 
   | 'air'
   | 'grass'
   | 'dirt'
@@ -122,6 +126,8 @@ export type BlockType =
   | 'tnt'
   | 'netherrack'
   | 'glowstone';
+
+export type BlockType = StandardBlockType | string;
 
 export interface InventoryItem {
   type: BlockType;
